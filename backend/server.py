@@ -18,6 +18,10 @@ ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT / ".env"
 RECV_WINDOW = "20000"
 TOP_GAINER_REFRESH_SECONDS = 600
+MIN_TURNOVER_24H = 500000
+MAX_SPREAD_PCT = 0.35
+MAX_TOP_GAINER_CHANGE_PCT = 65
+MIN_TOP_GAINER_CHANGE_PCT = 1
 BOT_SCAN_SECONDS = 30
 DEFAULT_SCAN_SYMBOLS = [
     "BTCUSDT",
@@ -381,12 +385,28 @@ def top_gainer_universe(force=False, limit=10):
             last_price = numeric(item.get("lastPrice"))
             turnover = numeric(item.get("turnover24h"))
             change = numeric(item.get("price24hPcnt"))
+            bid = numeric(item.get("bid1Price"))
+            ask = numeric(item.get("ask1Price"))
             if last_price <= 0 or turnover <= 0:
+                continue
+            change_pct = change * 100
+            spread_pct = ((ask - bid) / last_price) * 100 if ask > 0 and bid > 0 and ask >= bid else 0
+            filters = []
+            if turnover < MIN_TURNOVER_24H:
+                filters.append("low_turnover")
+            if spread_pct > MAX_SPREAD_PCT:
+                filters.append("wide_spread")
+            if change_pct > MAX_TOP_GAINER_CHANGE_PCT:
+                filters.append("overextended")
+            if change_pct < MIN_TOP_GAINER_CHANGE_PCT:
+                filters.append("weak_momentum")
+            if filters:
                 continue
             rows.append({
                 "symbol": symbol,
-                "changePct": change * 100,
+                "changePct": change_pct,
                 "turnover24h": turnover,
+                "spreadPct": round(spread_pct, 4),
                 "lastPrice": last_price,
             })
 
@@ -746,14 +766,19 @@ def rsi_divergence_engine(tf1h, tf15m, tf5m):
     rsi_now = rsi_values[-1]
     rsi_prev = rsi_values[-8]
     entry = candle_direction(tf5m[-1])
+    rsi_delta = abs(rsi_now - rsi_prev)
+    volume_ok = tf5m[-1]["volume"] >= avg_volume(tf5m, 20) * 0.9
+    body = abs(tf5m[-1]["close"] - tf5m[-1]["open"])
+    candle_range = max(tf5m[-1]["high"] - tf5m[-1]["low"], 0.00000001)
+    reversal_body_ok = (body / candle_range) >= 0.35
 
-    bearish = price_now > price_prev and rsi_now < rsi_prev and entry == "Sell"
-    bullish = price_now < price_prev and rsi_now > rsi_prev and entry == "Buy"
+    bearish = price_now > price_prev and rsi_now < rsi_prev and rsi_now >= 55 and rsi_delta >= 4 and entry == "Sell" and volume_ok and reversal_body_ok
+    bullish = price_now < price_prev and rsi_now > rsi_prev and rsi_now <= 45 and rsi_delta >= 4 and entry == "Buy" and volume_ok and reversal_body_ok
     if bearish and direction != "Buy":
-        return vote("RSI Divergence", "Sell", f"15M bearish divergence, 5M reversal candle, RSI {rsi_now:.1f}", abs(rsi_now - rsi_prev))
+        return vote("RSI Divergence", "Sell", f"15M bearish divergence confirmed, RSI {rsi_now:.1f}, delta {rsi_delta:.1f}", rsi_delta)
     if bullish and direction != "Sell":
-        return vote("RSI Divergence", "Buy", f"15M bullish divergence, 5M reversal candle, RSI {rsi_now:.1f}", abs(rsi_now - rsi_prev))
-    return vote("RSI Divergence", "WAIT", f"No usable divergence, RSI {rsi_now:.1f}")
+        return vote("RSI Divergence", "Buy", f"15M bullish divergence confirmed, RSI {rsi_now:.1f}, delta {rsi_delta:.1f}", rsi_delta)
+    return vote("RSI Divergence", "WAIT", f"No confirmed divergence, RSI {rsi_now:.1f}, delta {rsi_delta:.1f}")
 
 
 def vwap_bounce_engine(tf1h, tf15m, tf5m):
@@ -1382,6 +1407,133 @@ def select_best_signal(symbols, interval, mode):
     return (rows[0] if rows else None), rows
 
 
+def candles_until(candles, end_time, limit):
+    rows = [item for item in candles if item["time"] <= end_time]
+    return rows[-limit:]
+
+
+def estimate_trade_outcome(side, entry_price, future, stop_loss_pct, take_profit_pct):
+    if not future:
+        return "open", 0, entry_price
+    if side == "Buy":
+        stop = entry_price * (1 - stop_loss_pct / 100)
+        target = entry_price * (1 + take_profit_pct / 100)
+        for index, candle in enumerate(future, start=1):
+            hit_stop = candle["low"] <= stop
+            hit_target = candle["high"] >= target
+            if hit_stop and hit_target:
+                return "loss", index, stop
+            if hit_target:
+                return "win", index, target
+            if hit_stop:
+                return "loss", index, stop
+    else:
+        stop = entry_price * (1 + stop_loss_pct / 100)
+        target = entry_price * (1 - take_profit_pct / 100)
+        for index, candle in enumerate(future, start=1):
+            hit_stop = candle["high"] >= stop
+            hit_target = candle["low"] <= target
+            if hit_stop and hit_target:
+                return "loss", index, stop
+            if hit_target:
+                return "win", index, target
+            if hit_stop:
+                return "loss", index, stop
+    last_price = future[-1]["close"]
+    pnl_pct = ((last_price - entry_price) / entry_price) * 100 if side == "Buy" else ((entry_price - last_price) / entry_price) * 100
+    return ("win" if pnl_pct > 0 else "loss" if pnl_pct < 0 else "flat"), len(future), last_price
+
+
+def replay_strategy_quality(symbol, horizon="24h", mode="balanced", stop_loss_pct=0.8, take_profit_pct=1.6):
+    horizon = str(horizon or "24h").lower()
+    replay_interval = "15" if horizon == "7d" else "5"
+    limit = 700 if horizon == "7d" else 320
+    lookahead = 16 if replay_interval == "15" else 24
+    step = 2 if replay_interval == "15" else 3
+
+    tf5, msg5 = fetch_candles(symbol, replay_interval, limit=limit)
+    tf15, msg15 = fetch_candles(symbol, "15", limit=700)
+    tf1h, msg1h = fetch_candles(symbol, "60", limit=220)
+    if not tf5 or not tf15 or not tf1h:
+        return {"ok": False, "message": msg5 if not tf5 else msg15 if not tf15 else msg1h, "trades": []}
+
+    votes_by_engine = {}
+    signal_counts = {"Buy": 0, "Sell": 0, "WAIT": 0}
+    trades = []
+    cursor_block_until = 0
+    start_index = 80
+    for index in range(start_index, max(start_index, len(tf5) - lookahead), step):
+        if index <= cursor_block_until:
+            continue
+        end_time = tf5[index]["time"]
+        replay5 = tf5[:index + 1]
+        replay15 = candles_until(tf15, end_time, 120)
+        replay1h = candles_until(tf1h, end_time, 120)
+        if len(replay5) < 60 or len(replay15) < 60 or len(replay1h) < 60:
+            continue
+
+        votes = [
+            trend_following_engine(replay1h, replay15, replay5),
+            sr_breakout_engine(replay1h, replay15, replay5),
+            rsi_divergence_engine(replay1h, replay15, replay5),
+            vwap_bounce_engine(replay1h, replay15, replay5),
+            orb_engine(replay1h, replay15, replay5),
+        ]
+        for item in votes:
+            engine = item["engine"]
+            votes_by_engine.setdefault(engine, {"Buy": 0, "Sell": 0, "WAIT": 0})
+            votes_by_engine[engine][item["signal"]] = votes_by_engine[engine].get(item["signal"], 0) + 1
+
+        router = route_votes(votes, mode)
+        signal = router["decision"]
+        signal_counts[signal] = signal_counts.get(signal, 0) + 1
+        if signal not in ("Buy", "Sell"):
+            continue
+
+        entry = replay5[-1]["close"]
+        outcome, bars_held, exit_price = estimate_trade_outcome(signal, entry, tf5[index + 1:index + 1 + lookahead], stop_loss_pct, take_profit_pct)
+        pnl_pct = ((exit_price - entry) / entry) * 100 if signal == "Buy" else ((entry - exit_price) / entry) * 100
+        trades.append({
+            "time": end_time,
+            "symbol": symbol,
+            "side": signal,
+            "entry": round(entry, 8),
+            "exit": round(exit_price, 8),
+            "outcome": outcome,
+            "pnlPct": round(pnl_pct, 4),
+            "barsHeld": bars_held,
+            "router": router,
+            "votes": votes,
+        })
+        cursor_block_until = index + max(1, bars_held)
+
+    wins = len([item for item in trades if item["outcome"] == "win"])
+    losses = len([item for item in trades if item["outcome"] == "loss"])
+    flats = len(trades) - wins - losses
+    total_pnl = sum(item["pnlPct"] for item in trades)
+    return {
+        "ok": True,
+        "symbol": symbol,
+        "horizon": horizon,
+        "interval": replay_interval,
+        "mode": normalize_mode(mode),
+        "candles": len(tf5),
+        "stopLossPct": stop_loss_pct,
+        "takeProfitPct": take_profit_pct,
+        "summary": {
+            "trades": len(trades),
+            "wins": wins,
+            "losses": losses,
+            "flats": flats,
+            "winRate": round((wins / len(trades)) * 100, 2) if trades else 0,
+            "estimatedPnlPct": round(total_pnl, 4),
+        },
+        "signalCounts": signal_counts,
+        "votesByEngine": votes_by_engine,
+        "trades": trades[-100:],
+    }
+
+
 def tpsl_prices(symbol, side, stop_loss_pct, take_profit_pct):
     mark = get_mark_price(symbol)
     if not mark:
@@ -1737,13 +1889,18 @@ class Handler(BaseHTTPRequestHandler):
             symbols = query.get("symbols", ",".join(universe["symbols"]))
             interval = query.get("interval", "15")
             mode = normalize_mode(query.get("mode", "balanced"))
+            market_rows = {row.get("symbol"): row for row in universe.get("rows", [])}
             rows = []
             for symbol in [item.strip().upper() for item in symbols.split(",") if item.strip()]:
                 signal, reason, votes, router, indicators, engine_status = evaluate_signal(symbol, interval, mode)
+                market = market_rows.get(symbol, {})
                 rows.append({
                     "symbol": symbol,
                     "signal": signal,
                     "reason": reason,
+                    "changePct": market.get("changePct"),
+                    "turnover24h": market.get("turnover24h"),
+                    "spreadPct": market.get("spreadPct"),
                     "engineVotes": votes,
                     "router": router,
                     "indicators": indicators,
@@ -1760,6 +1917,16 @@ class Handler(BaseHTTPRequestHandler):
                 "scanSeconds": BOT_SCAN_SECONDS,
                 "topGainerRefreshSeconds": TOP_GAINER_REFRESH_SECONDS,
             })
+            return
+
+        if parsed.path == "/api/bot/replay":
+            symbol = query.get("symbol", "BTCUSDT").upper()
+            horizon = query.get("horizon", "24h")
+            mode = normalize_mode(query.get("mode", BOT_STATE.get("mode", "balanced")))
+            stop_loss_pct = numeric(query.get("stopLossPct"), BOT_STATE.get("stopLossPct", 0.8))
+            take_profit_pct = numeric(query.get("takeProfitPct"), BOT_STATE.get("takeProfitPct", 1.6))
+            payload = replay_strategy_quality(symbol, horizon, mode, stop_loss_pct, take_profit_pct)
+            json_response(self, 200, payload)
             return
 
         json_response(self, 404, {"ok": False, "error": "Route not found"})

@@ -139,7 +139,7 @@
     }
 
     body.control-view .main-grid {
-      grid-template-columns: minmax(360px, 28vw) minmax(640px, 1fr);
+      grid-template-columns: minmax(520px, 34vw) minmax(720px, 1fr);
     }
 
     body.dashboard-view .control-col,
@@ -149,6 +149,14 @@
     body.control-view .center-col,
     body.control-view .health-strip {
       display: none;
+    }
+
+    body.control-view .right-col {
+      grid-column: auto;
+    }
+
+    body.control-view .control-col {
+      max-width: none;
     }
 
     .page-extra {
@@ -1396,34 +1404,64 @@
     </section>
 
     <section class="page-extra two-col-page" id="tradesJournalPage" aria-label="Active trades and trade journal page">
+      <div class="stack">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Active Trades</h2>
+            <span class="tag buy" id="positionsPageCount">Loading</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Pair</th>
+                  <th>Side</th>
+                  <th class="right">Entry</th>
+                  <th class="right">Mark</th>
+                  <th class="right">Size</th>
+                  <th class="right">PnL</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="positionsPageBody">
+                <tr><td colspan="7" class="muted">Loading live positions...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Trade Management</h2>
+            <button class="btn" type="button" id="manageStopsBtnPage">Manage stops</button>
+          </div>
+          <div class="exchange-grid">
+            <div class="exchange-item"><span>Breakeven trigger</span><strong id="tmBreakeven">Loading</strong></div>
+            <div class="exchange-item"><span>Partial TP</span><strong id="tmPartial">Loading</strong></div>
+            <div class="exchange-item"><span>Trailing stop</span><strong id="tmTrailing">Loading</strong></div>
+            <div class="exchange-item"><span>Last manager result</span><strong id="tmLastResult">Loading</strong></div>
+          </div>
+        </section>
+      </div>
       <section class="panel">
         <div class="panel-head">
-          <h2>Active Trades</h2>
-          <span class="tag buy" id="positionsPageCount">Loading</span>
+          <h2>Trade Journal</h2>
+          <button class="btn" type="button" id="exportJournalBtn">Export CSV</button>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Pair</th>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Symbol</th>
                 <th>Side</th>
-                <th class="right">Entry</th>
-                <th class="right">Mark</th>
-                <th class="right">Size</th>
-                <th class="right">PnL</th>
                 <th>Status</th>
               </tr>
             </thead>
-            <tbody id="positionsPageBody">
-              <tr><td colspan="7" class="muted">Loading live positions...</td></tr>
+            <tbody id="journalTableBody">
+              <tr><td colspan="5" class="muted">Loading journal...</td></tr>
             </tbody>
           </table>
-        </div>
-      </section>
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Trade Journal</h2>
-          <span class="pill">Persistent</span>
         </div>
         <div class="panel-body">
           <div class="timeline" id="journalPageLog">
@@ -1503,11 +1541,10 @@
               <input id="replaySymbol" type="text" value="BTCUSDT">
             </div>
             <div class="field">
-              <label for="replayInterval">Replay timeframe</label>
-              <select id="replayInterval">
-                <option value="5">5m</option>
-                <option value="15">15m</option>
-                <option value="60">1h</option>
+              <label for="replayHorizon">Replay range</label>
+              <select id="replayHorizon">
+                <option value="24h">Last 24h</option>
+                <option value="7d">Last 7d</option>
               </select>
             </div>
           </div>
@@ -1604,6 +1641,13 @@
     const positionsPageBody = document.getElementById("positionsPageBody");
     const positionsPageCount = document.getElementById("positionsPageCount");
     const journalPageLog = document.getElementById("journalPageLog");
+    const journalTableBody = document.getElementById("journalTableBody");
+    const exportJournalBtn = document.getElementById("exportJournalBtn");
+    const manageStopsBtnPage = document.getElementById("manageStopsBtnPage");
+    const tmBreakeven = document.getElementById("tmBreakeven");
+    const tmPartial = document.getElementById("tmPartial");
+    const tmTrailing = document.getElementById("tmTrailing");
+    const tmLastResult = document.getElementById("tmLastResult");
     const analyticsTradesToday = document.getElementById("analyticsTradesToday");
     const analyticsLossUsed = document.getElementById("analyticsLossUsed");
     const analyticsRouterMode = document.getElementById("analyticsRouterMode");
@@ -1612,7 +1656,7 @@
     const analyticsStrategyGrid = document.getElementById("analyticsStrategyGrid");
     const analyticsHealthGrid = document.getElementById("analyticsHealthGrid");
     const replaySymbol = document.getElementById("replaySymbol");
-    const replayInterval = document.getElementById("replayInterval");
+    const replayHorizon = document.getElementById("replayHorizon");
     const replayResult = document.getElementById("replayResult");
     const replayResultTag = document.getElementById("replayResultTag");
     const apiParam = new URLSearchParams(window.location.search).get("api");
@@ -1630,6 +1674,7 @@
     let lastMarketRefreshAt = null;
     let lastApiLatency = null;
     let scannerUniverse = null;
+    let latestJournalEntries = [];
     let nextScannerRefreshAt = Date.now() + scannerRefreshMs;
 
     function money(value, digits = 2) {
@@ -1817,9 +1862,51 @@
     }
 
     function renderJournal(entries) {
+      latestJournalEntries = Array.isArray(entries) ? entries : [];
       const log = document.getElementById("log");
       renderJournalInto(log, entries);
       renderJournalInto(journalPageLog, entries);
+      if (!latestJournalEntries.length) {
+        journalTableBody.innerHTML = `<tr><td colspan="5" class="muted">No persistent trade journal events yet.</td></tr>`;
+        return;
+      }
+      journalTableBody.innerHTML = "";
+      latestJournalEntries.slice().reverse().forEach((entry) => {
+        const payload = entry.payload || {};
+        const result = payload.result || {};
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${new Date(Number(entry.time || 0) * 1000).toLocaleString()}</td>
+          <td>${entry.event || "event"}</td>
+          <td>${payload.symbol || "-"}</td>
+          <td>${payload.signal || payload.side || "-"}</td>
+          <td>${result.retMsg || result.reason || (result.retCode === 0 ? "OK" : "-")}</td>
+        `;
+        journalTableBody.appendChild(tr);
+      });
+    }
+
+    function exportJournalCsv() {
+      const rows = [["time", "event", "symbol", "side", "status"]];
+      latestJournalEntries.forEach((entry) => {
+        const payload = entry.payload || {};
+        const result = payload.result || {};
+        rows.push([
+          new Date(Number(entry.time || 0) * 1000).toISOString(),
+          entry.event || "",
+          payload.symbol || "",
+          payload.signal || payload.side || "",
+          result.retMsg || result.reason || (result.retCode === 0 ? "OK" : "")
+        ]);
+      });
+      const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `bybit-trade-journal-${Date.now()}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
     }
 
     async function api(path, options = {}) {
@@ -1993,11 +2080,14 @@
           item.className = "signal";
           const tagClass = row.signal === "Buy" ? "buy" : row.signal === "Sell" ? "sell" : "";
           const coin = row.symbol.slice(0, 3);
+          const marketInfo = row.changePct !== undefined
+            ? ` | 24h ${numberText(row.changePct, 2)}%, spread ${numberText(row.spreadPct || 0, 3)}%`
+            : "";
           item.innerHTML = `
             <div class="coin">${coin}</div>
             <div>
               <strong>${row.symbol}</strong>
-              <small>${row.reason}</small>
+              <small>${row.reason}${marketInfo}</small>
             </div>
             <span class="tag ${tagClass}">${row.signal}</span>
           `;
@@ -2118,6 +2208,10 @@
       document.getElementById("partialTpClose").value = bot.partialTpClosePct || 50;
       document.getElementById("trailingTrigger").value = bot.trailingStopTriggerPct || 0.8;
       document.getElementById("trailingDistance").value = bot.trailingStopDistancePct || 0.35;
+      tmBreakeven.textContent = `${bot.breakevenTriggerPct || 0.6}%`;
+      tmPartial.textContent = `${bot.partialTpTriggerPct || 1.0}% / close ${bot.partialTpClosePct || 50}%`;
+      tmTrailing.textContent = `${bot.trailingStopTriggerPct || 0.8}% / distance ${bot.trailingStopDistancePct || 0.35}%`;
+      tmLastResult.textContent = (bot.tradeManagement || {}).reason || "Waiting";
       const overview = bot.engineOverview || {};
       const status = overview.status || bot.engineStatus || {};
       engineMarketData.textContent = status.marketData || "idle";
@@ -2147,34 +2241,51 @@
 
     async function runReplay() {
       const symbol = (replaySymbol.value || activeSymbol()).trim().toUpperCase();
-      const interval = replayInterval.value || "5";
+      const horizon = replayHorizon.value || "24h";
+      const mode = document.getElementById("routerMode").value;
+      const stopLossPct = Number(document.getElementById("stop").value || 0.8);
+      const takeProfitPct = Number(document.getElementById("take").value || 1.6);
       replayResultTag.textContent = "Running";
-      replayResult.innerHTML = `<p class="page-note">Loading live candles for ${symbol}...</p>`;
+      replayResult.innerHTML = `<p class="page-note">Running ${horizon} strategy replay for ${symbol}...</p>`;
       try {
-        const result = await api(`/api/bybit/kline?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`);
-        if (!result.ok || !Array.isArray(result.candles) || !result.candles.length) {
+        const result = await api(`/api/bot/replay?symbol=${encodeURIComponent(symbol)}&horizon=${encodeURIComponent(horizon)}&mode=${encodeURIComponent(mode)}&stopLossPct=${encodeURIComponent(stopLossPct)}&takeProfitPct=${encodeURIComponent(takeProfitPct)}`);
+        if (!result.ok) {
           replayResultTag.textContent = "No data";
-          replayResult.innerHTML = `<p class="page-note">${result.message || "No live candle data available for replay."}</p>`;
+          replayResult.innerHTML = `<p class="page-note">${result.message || "Replay unavailable."}</p>`;
           return;
         }
-        const candles = result.candles;
-        const closes = candles.map((item) => Number(item.close)).filter(Number.isFinite);
-        const highs = candles.map((item) => Number(item.high)).filter(Number.isFinite);
-        const lows = candles.map((item) => Number(item.low)).filter(Number.isFinite);
-        const volume = candles.reduce((sum, item) => sum + (Number(item.volume) || 0), 0);
-        const first = closes[0];
-        const last = closes[closes.length - 1];
-        const movePct = first ? ((last - first) / first) * 100 : 0;
-        replayResultTag.textContent = `${candles.length} candles`;
+        const summary = result.summary || {};
+        const votes = result.votesByEngine || {};
+        const trades = result.trades || [];
+        replayResultTag.textContent = `${summary.trades || 0} trades`;
+        const voteRows = Object.entries(votes).map(([engine, counts]) => `
+          <tr><td>${engine}</td><td>${counts.Buy || 0}</td><td>${counts.Sell || 0}</td><td>${counts.WAIT || 0}</td></tr>
+        `).join("");
+        const tradeRows = trades.slice(-25).reverse().map((trade) => `
+          <tr>
+            <td>${new Date(Number(trade.time || 0)).toLocaleString()}</td>
+            <td class="${trade.side === "Buy" ? "green" : "red"}">${trade.side}</td>
+            <td class="right">${numberText(trade.entry, 6)}</td>
+            <td class="right">${numberText(trade.exit, 6)}</td>
+            <td class="${trade.outcome === "win" ? "green" : trade.outcome === "loss" ? "red" : ""}">${trade.outcome}</td>
+            <td class="right">${numberText(trade.pnlPct, 2)}%</td>
+          </tr>
+        `).join("");
         replayResult.innerHTML = `
           <div class="exchange-grid">
             <div class="exchange-item"><span>Symbol</span><strong>${symbol}</strong></div>
-            <div class="exchange-item"><span>Timeframe</span><strong>${interval === "60" ? "1h" : `${interval}m`}</strong></div>
-            <div class="exchange-item"><span>Candles</span><strong>${candles.length}</strong></div>
-            <div class="exchange-item"><span>Close move</span><strong class="${movePct >= 0 ? "green" : "red"}">${numberText(movePct, 2)}%</strong></div>
-            <div class="exchange-item"><span>High</span><strong>${numberText(Math.max(...highs), 6)}</strong></div>
-            <div class="exchange-item"><span>Low</span><strong>${numberText(Math.min(...lows), 6)}</strong></div>
-            <div class="exchange-item"><span>Volume</span><strong>${numberText(volume, 2)}</strong></div>
+            <div class="exchange-item"><span>Range</span><strong>${result.horizon}</strong></div>
+            <div class="exchange-item"><span>Candles</span><strong>${result.candles}</strong></div>
+            <div class="exchange-item"><span>Trades</span><strong>${summary.trades || 0}</strong></div>
+            <div class="exchange-item"><span>Win / Loss</span><strong>${summary.wins || 0} / ${summary.losses || 0}</strong></div>
+            <div class="exchange-item"><span>Win rate</span><strong>${numberText(summary.winRate || 0, 2)}%</strong></div>
+            <div class="exchange-item"><span>Estimated PnL</span><strong class="${(summary.estimatedPnlPct || 0) >= 0 ? "green" : "red"}">${numberText(summary.estimatedPnlPct || 0, 2)}%</strong></div>
+          </div>
+          <div class="table-wrap" style="margin-top:12px">
+            <table><thead><tr><th>Engine</th><th>Buy votes</th><th>Sell votes</th><th>Wait</th></tr></thead><tbody>${voteRows || `<tr><td colspan="4" class="muted">No votes</td></tr>`}</tbody></table>
+          </div>
+          <div class="table-wrap" style="margin-top:12px">
+            <table><thead><tr><th>Time</th><th>Side</th><th class="right">Entry</th><th class="right">Exit</th><th>Result</th><th class="right">PnL</th></tr></thead><tbody>${tradeRows || `<tr><td colspan="6" class="muted">No trades matched replay rules</td></tr>`}</tbody></table>
           </div>
         `;
       } catch (error) {
@@ -2337,6 +2448,8 @@
       tab.addEventListener("click", () => showPage(tab.dataset.page || "dashboard"));
     });
     document.getElementById("runReplayBtn").addEventListener("click", runReplay);
+    exportJournalBtn.addEventListener("click", exportJournalCsv);
+    manageStopsBtnPage.addEventListener("click", () => document.getElementById("manageStopsBtn").click());
     document.getElementById("timeframe").addEventListener("change", refreshLiveData);
     document.getElementById("routerMode").addEventListener("change", refreshScanner);
     checkBackend();

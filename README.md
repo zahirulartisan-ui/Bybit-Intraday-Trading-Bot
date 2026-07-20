@@ -76,6 +76,10 @@ Router modes:
 
 The bot refreshes its scan universe every 10 minutes from the Bybit linear USDT top-gainer list, then scans the top 10 symbols for the best live signal. If the exchange ticker request fails, it falls back to BTCUSDT, ETHUSDT, SOLUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT, LINKUSDT, and LTCUSDT.
 
+Scanner filters remove low-turnover pairs, wide-spread pairs, weak momentum, and overextended gainers before the signal engine votes.
+
+Backtest / Paper Replay uses live Bybit candles only. It can replay the last 24h or 7d, count all five strategy votes, estimate trades from router decisions, and score estimated win/loss without placing live or demo orders.
+
 ## Risk And Trade Management
 
 - Frontend API base is configurable with `?api=http://127.0.0.1:8787` and is remembered in browser storage.
