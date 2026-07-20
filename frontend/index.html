@@ -725,6 +725,23 @@
       font-size: .72rem;
     }
 
+    .life-step[data-state="blocked"],
+    .life-step[data-state="rejected"] {
+      color: var(--red);
+    }
+
+    .life-step[data-state="passed"],
+    .life-step[data-state="accepted"],
+    .life-step[data-state="filled"],
+    .life-step[data-state="attached"] {
+      color: var(--green);
+    }
+
+    .life-step[data-state="skipped"],
+    .life-step[data-state="idle"] {
+      color: var(--muted);
+    }
+
     .empty-state {
       display: grid;
       place-items: center;
@@ -906,10 +923,10 @@
         <div>
           <span>Order lifecycle</span>
           <div class="lifecycle">
-            <span class="life-step"><span class="life-dot">1</span>Signal</span>
-            <span class="life-step"><span class="life-dot">2</span>Order</span>
-            <span class="life-step"><span class="life-dot">3</span>Risk</span>
-            <span class="life-step"><span class="life-dot">4</span>Status</span>
+            <span class="life-step" id="lifeSignal" data-state="idle"><span class="life-dot">1</span>Signal</span>
+            <span class="life-step" id="lifeGuard" data-state="idle"><span class="life-dot">2</span>Guard</span>
+            <span class="life-step" id="lifeOrder" data-state="idle"><span class="life-dot">3</span>Order</span>
+            <span class="life-step" id="lifeStatus" data-state="idle"><span class="life-dot">4</span>Status</span>
           </div>
         </div>
       </div>
@@ -1344,6 +1361,10 @@
     const apiLatency = document.getElementById("apiLatency");
     const routerStatus = document.getElementById("routerStatus");
     const engineStatusFooter = document.getElementById("engineStatusFooter");
+    const lifeSignal = document.getElementById("lifeSignal");
+    const lifeGuard = document.getElementById("lifeGuard");
+    const lifeOrder = document.getElementById("lifeOrder");
+    const lifeStatus = document.getElementById("lifeStatus");
     const dashboardTab = document.getElementById("dashboardTab");
     const controlTab = document.getElementById("controlTab");
     const exchangeBaseUrl = document.getElementById("exchangeBaseUrl");
@@ -1741,6 +1762,21 @@
       return value.replace("m", "").replace("h", "60");
     }
 
+    function setLifecycleStep(el, label, state) {
+      const cleanState = String(state || "idle").toLowerCase();
+      el.dataset.state = cleanState;
+      const dot = el.querySelector(".life-dot");
+      const dotText = dot ? dot.outerHTML : "";
+      el.innerHTML = `${dotText}${label}: ${state || "idle"}`;
+    }
+
+    function renderLifecycle(lifecycle = {}) {
+      setLifecycleStep(lifeSignal, "Signal", lifecycle.signal || "WAIT");
+      setLifecycleStep(lifeGuard, "Guard", lifecycle.guard || "idle");
+      setLifecycleStep(lifeOrder, "Order", lifecycle.order || "idle");
+      setLifecycleStep(lifeStatus, "Status", lifecycle.status || "idle");
+    }
+
     function renderBotStatus(bot) {
       autoStatus.textContent = bot.enabled ? "Running" : "Stopped";
       autoSignal.textContent = bot.lastSignal || "WAIT";
@@ -1755,7 +1791,10 @@
       scannerUniverse = bot.universe || scannerUniverse;
       updateUniverseText(scannerUniverse);
       updateCountdowns();
-      autoReason.textContent = `${displaySymbol} | ${mode}${sizeText}: ${bot.lastReason || "No signal yet."} (${router.confidence || 0}/${router.requiredVotes || 1} votes)`;
+      const guard = bot.executionGuard || {};
+      const guardText = guard.ok === false ? ` | guard: ${guard.reason || "blocked"}` : "";
+      autoReason.textContent = `${displaySymbol} | ${mode}${sizeText}: ${bot.lastReason || "No signal yet."}${guardText} (${router.confidence || 0}/${router.requiredVotes || 1} votes)`;
+      renderLifecycle(bot.orderLifecycle || {});
       chartSignal.textContent = `Signal: ${bot.lastSignal || "WAIT"}`;
       routerStatus.textContent = bot.lastSignal || "WAIT";
       engineStatusFooter.textContent = bot.enabled ? "Running" : "Stopped";

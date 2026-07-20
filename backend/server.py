@@ -77,6 +77,15 @@ BOT_STATE = {
         "mode": "balanced",
     },
     "lastOrder": None,
+    "executionGuard": {"ok": True, "reason": "No execution attempted yet"},
+    "orderLifecycle": {
+        "signal": "WAIT",
+        "guard": "idle",
+        "order": "idle",
+        "protection": "idle",
+        "status": "idle",
+        "reason": "No execution attempted yet",
+    },
     "lastRunAt": None,
     "engineStatus": {},
     "scannerRows": [],
@@ -1028,6 +1037,114 @@ def get_open_positions():
     return positions, "OK"
 
 
+def get_symbol_open_positions(symbol):
+    payload = bybit_request("GET", "/v5/position/list", {"category": "linear", "symbol": symbol})
+    if payload.get("retCode") != 0:
+        return None, payload.get("retMsg", "Symbol position check failed")
+    positions = []
+    for position in (payload.get("result") or {}).get("list") or []:
+        try:
+            size = abs(float(position.get("size") or 0))
+        except (TypeError, ValueError):
+            size = 0
+        if size > 0:
+            positions.append(position)
+    return positions, "OK"
+
+
+def summarize_position(position):
+    try:
+        size = abs(float(position.get("size") or 0))
+    except (TypeError, ValueError):
+        size = 0
+    return {
+        "symbol": position.get("symbol", ""),
+        "side": position.get("side", ""),
+        "size": size,
+        "avgPrice": position.get("avgPrice"),
+        "markPrice": position.get("markPrice"),
+        "stopLoss": position.get("stopLoss"),
+        "takeProfit": position.get("takeProfit"),
+        "trailingStop": position.get("trailingStop"),
+        "positionIdx": position.get("positionIdx"),
+    }
+
+
+def order_lifecycle(signal="WAIT", guard="idle", order="idle", protection="idle", status="idle", reason=""):
+    return {
+        "signal": signal,
+        "guard": guard,
+        "order": order,
+        "protection": protection,
+        "status": status,
+        "reason": reason,
+    }
+
+
+def existing_position_guard(symbol, signal, state):
+    positions, msg = get_symbol_open_positions(symbol)
+    if positions is None:
+        return {
+            "ok": False,
+            "reason": msg,
+            "positions": [],
+            "sameDirection": False,
+            "oppositeDirection": False,
+        }
+
+    signal_side = "Buy" if signal == "Buy" else "Sell"
+    summaries = [summarize_position(position) for position in positions]
+    same = [position for position in summaries if position["side"] == signal_side]
+    opposite = [position for position in summaries if position["side"] and position["side"] != signal_side]
+    if same:
+        return {
+            "ok": False,
+            "reason": f"Existing {symbol} {signal_side} position detected; duplicate entry blocked",
+            "positions": summaries,
+            "sameDirection": True,
+            "oppositeDirection": False,
+        }
+    if opposite:
+        return {
+            "ok": False,
+            "reason": f"Existing {symbol} opposite position detected; reverse trade blocked",
+            "positions": summaries,
+            "sameDirection": False,
+            "oppositeDirection": True,
+        }
+
+    open_count, open_msg = get_open_positions_count()
+    if open_count is None:
+        return {
+            "ok": False,
+            "reason": open_msg,
+            "positions": summaries,
+            "sameDirection": False,
+            "oppositeDirection": False,
+        }
+    max_open = max(1, int(state.get("maxOpenPositions") or 1))
+    if open_count >= max_open:
+        return {
+            "ok": False,
+            "reason": f"Max open positions reached ({open_count}/{max_open})",
+            "positions": summaries,
+            "openPositions": open_count,
+            "maxOpenPositions": max_open,
+            "sameDirection": False,
+            "oppositeDirection": False,
+        }
+
+    return {
+        "ok": True,
+        "reason": "No existing position conflict",
+        "positions": summaries,
+        "openPositions": open_count,
+        "maxOpenPositions": max_open,
+        "sameDirection": False,
+        "oppositeDirection": False,
+    }
+
+
 def position_key(position):
     symbol = position.get("symbol", "")
     open_time = position.get("openTime") or position.get("createdTime") or position.get("updatedTime") or "0"
@@ -1305,6 +1422,55 @@ def place_demo_order(symbol, side, qty, source, stop_loss_pct=None, take_profit_
     return bybit_request("POST", "/v5/order/create", order)
 
 
+def fetch_order_status(symbol, order_result):
+    result = order_result.get("result") or {}
+    order_id = result.get("orderId")
+    order_link_id = result.get("orderLinkId")
+    if not order_id and not order_link_id:
+        return {"ok": False, "reason": "Order id unavailable"}
+
+    params = {"category": "linear", "symbol": symbol}
+    if order_id:
+        params["orderId"] = order_id
+    elif order_link_id:
+        params["orderLinkId"] = order_link_id
+
+    realtime = bybit_request("GET", "/v5/order/realtime", params)
+    rows = (realtime.get("result") or {}).get("list") or []
+    if realtime.get("retCode") == 0 and rows:
+        row = rows[0]
+        return {
+            "ok": True,
+            "source": "realtime",
+            "orderId": row.get("orderId") or order_id,
+            "orderLinkId": row.get("orderLinkId") or order_link_id,
+            "orderStatus": row.get("orderStatus") or "Unknown",
+            "cumExecQty": row.get("cumExecQty"),
+            "avgPrice": row.get("avgPrice"),
+        }
+
+    history = bybit_request("GET", "/v5/order/history", params)
+    rows = (history.get("result") or {}).get("list") or []
+    if history.get("retCode") == 0 and rows:
+        row = rows[0]
+        return {
+            "ok": True,
+            "source": "history",
+            "orderId": row.get("orderId") or order_id,
+            "orderLinkId": row.get("orderLinkId") or order_link_id,
+            "orderStatus": row.get("orderStatus") or "Unknown",
+            "cumExecQty": row.get("cumExecQty"),
+            "avgPrice": row.get("avgPrice"),
+        }
+
+    return {
+        "ok": False,
+        "reason": realtime.get("retMsg") or history.get("retMsg") or "Order status unavailable",
+        "orderId": order_id,
+        "orderLinkId": order_link_id,
+    }
+
+
 def close_symbol_positions(symbol):
     payload = bybit_request("GET", "/v5/position/list", {"category": "linear", "symbol": symbol})
     if payload.get("retCode") != 0:
@@ -1389,29 +1555,55 @@ def bot_tick():
         "positionSizing": sizing,
         "tradeManagement": management,
         "dailyRisk": daily_risk,
+        "executionGuard": {"ok": True, "reason": "No execution signal"},
+        "orderLifecycle": order_lifecycle(signal=signal, reason=reason),
     }
 
     if signal in ("Buy", "Sell"):
         if daily_risk.get("blocked"):
             update["lastReason"] = reason + f"; daily risk blocked: {daily_risk.get('reason', 'Daily risk blocked')}"
+            update["executionGuard"] = {"ok": False, "reason": daily_risk.get("reason", "Daily risk blocked")}
+            update["orderLifecycle"] = order_lifecycle(signal=signal, guard="blocked", order="skipped", protection="skipped", status="blocked", reason=update["lastReason"])
         elif not sizing.get("ok"):
             update["lastReason"] = reason + f"; sizing blocked: {sizing.get('reason', 'Unknown sizing error')}"
+            update["executionGuard"] = {"ok": False, "reason": sizing.get("reason", "Unknown sizing error")}
+            update["orderLifecycle"] = order_lifecycle(signal=signal, guard="blocked", order="skipped", protection="skipped", status="blocked", reason=update["lastReason"])
         else:
             engine = get_bot_engine()
-            approved, risk_reason = engine.risk_check(active_state, signal)
-            update["engineStatus"] = dict(engine.status)
-            if not approved:
-                update["lastReason"] = reason + f"; {risk_reason}"
-            else:
-                result = engine.execute(active_state, signal)
+            guard = existing_position_guard(symbol, signal, active_state)
+            update["executionGuard"] = guard
+            if not guard.get("ok"):
+                engine.set_status("risk", "blocked")
                 update["engineStatus"] = dict(engine.status)
-                update["lastOrder"] = result
-                update["qty"] = active_state["qty"]
-                if result.get("retCode") == 0:
-                    update["lastTradeAt"] = int(now)
-                    update["lastReason"] = reason + f"; demo order accepted with qty {active_state['qty']}"
+                update["lastReason"] = reason + f"; execution guard blocked: {guard.get('reason', 'Position guard blocked')}"
+                update["orderLifecycle"] = order_lifecycle(signal=signal, guard="blocked", order="skipped", protection="skipped", status="blocked", reason=guard.get("reason", "Position guard blocked"))
+            else:
+                approved, risk_reason = engine.risk_check(active_state, signal)
+                update["engineStatus"] = dict(engine.status)
+                if not approved:
+                    update["lastReason"] = reason + f"; {risk_reason}"
+                    update["executionGuard"] = {**guard, "ok": False, "reason": risk_reason}
+                    update["orderLifecycle"] = order_lifecycle(signal=signal, guard="blocked", order="skipped", protection="skipped", status="blocked", reason=risk_reason)
                 else:
-                    update["lastReason"] = reason + f"; order rejected: {result.get('retMsg', 'Unknown error')}"
+                    result = engine.execute(active_state, signal)
+                    update["engineStatus"] = dict(engine.status)
+                    update["lastOrder"] = result
+                    update["qty"] = active_state["qty"]
+                    protection_status = "attached" if (
+                        result.get("retCode") == 0
+                        and active_state.get("stopLossPct") is not None
+                        and active_state.get("takeProfitPct") is not None
+                    ) else "skipped"
+                    if result.get("retCode") == 0:
+                        order_status = fetch_order_status(symbol, result)
+                        result["lifecycleStatus"] = order_status
+                        update["lastTradeAt"] = int(now)
+                        update["lastReason"] = reason + f"; demo order accepted with qty {active_state['qty']}"
+                        lifecycle_status = order_status.get("orderStatus") or "open-check-pending"
+                        update["orderLifecycle"] = order_lifecycle(signal=signal, guard="passed", order=lifecycle_status, protection=protection_status, status="accepted", reason=update["lastReason"])
+                    else:
+                        update["lastReason"] = reason + f"; order rejected: {result.get('retMsg', 'Unknown error')}"
+                        update["orderLifecycle"] = order_lifecycle(signal=signal, guard="passed", order="rejected", protection="skipped", status="rejected", reason=result.get("retMsg", "Unknown error"))
 
     with BOT_LOCK:
         BOT_STATE.update(update)

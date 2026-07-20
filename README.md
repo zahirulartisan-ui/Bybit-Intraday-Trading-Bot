@@ -78,6 +78,8 @@ The bot refreshes its scan universe every 10 minutes from the Bybit linear USDT 
 - Trade manager can move profitable positions to breakeven stop when the configured trigger is reached.
 - Trade manager can take one-time partial profit with a reduce-only market close after validating exchange min notional.
 - Trade manager can arm Bybit trailing stops after the configured profit trigger.
+- Execution guard blocks duplicate same-symbol entries, opposite/reverse entries, and max-open-position overflow before sending an order.
+- Order lifecycle records signal, guard, order status, SL/TP protection, and final execution state for the dashboard.
 - Dry-check position sizing without placing an order: `GET /api/bot/sizing?symbol=BTCUSDT`.
 
 ## Safety
