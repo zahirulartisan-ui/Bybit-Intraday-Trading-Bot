@@ -43,6 +43,7 @@ The repo includes Render-compatible root files:
 
 - `requirements.txt` for the default Render build command.
 - `render.yaml` with `python backend/server.py` as the start command.
+- `app/main.py` supports Render dashboards that still use `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
 - The backend binds to `0.0.0.0:$PORT` and serves the frontend at `/`.
 
 Set these Render environment variables before live demo testing:
