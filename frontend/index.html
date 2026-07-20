@@ -1748,7 +1748,8 @@
       const mode = router.mode || bot.mode || "balanced";
       const picked = bot.selectedSignalSymbol || bot.symbol || "BTCUSDT";
       const sizing = bot.positionSizing || {};
-      const sizeText = sizing.qty ? ` | qty ${sizing.qty}` : "";
+      const notionalText = sizing.notional ? ` / ${money(sizing.notional, 2)}` : "";
+      const sizeText = sizing.qty ? ` | qty ${sizing.qty}${notionalText}` : "";
       if (bot.enabled) setActiveSymbol(picked);
       const displaySymbol = bot.enabled ? picked : activeSymbol();
       scannerUniverse = bot.universe || scannerUniverse;

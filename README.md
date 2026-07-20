@@ -72,12 +72,13 @@ The bot refreshes its scan universe every 10 minutes from the Bybit linear USDT 
 - Frontend API base is configurable with `?api=http://127.0.0.1:8787` and is remembered in browser storage.
 - Backend runtime uses the modular engine files in `backend/engines/`.
 - Trade journal persists to `backend/data/trade_journal.json` or `BOT_JOURNAL_PATH`.
-- Position sizing uses wallet equity, risk-per-trade %, stop-loss %, max allocation, and Bybit instrument qty rules.
+- Position sizing uses wallet equity, risk-per-trade %, stop-loss %, max allocation, Bybit instrument qty step, min order qty, min notional, and max order qty.
 - Risk guard blocks duplicate symbol positions and max-open-position overflow.
 - Daily risk guard blocks entries after the daily loss cap or max trades/day is reached.
 - Trade manager can move profitable positions to breakeven stop when the configured trigger is reached.
-- Trade manager can take one-time partial profit with a reduce-only market close.
+- Trade manager can take one-time partial profit with a reduce-only market close after validating exchange min notional.
 - Trade manager can arm Bybit trailing stops after the configured profit trigger.
+- Dry-check position sizing without placing an order: `GET /api/bot/sizing?symbol=BTCUSDT`.
 
 ## Safety
 

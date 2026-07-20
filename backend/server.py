@@ -428,12 +428,25 @@ def get_tick_size(symbol):
 
 def get_instrument_rules(symbol):
     payload = public_bybit_get("/v5/market/instruments-info", {"category": "linear", "symbol": symbol})
+    if payload.get("retCode") != 0:
+        return {
+            "ok": False,
+            "reason": payload.get("retMsg", "Instrument rules unavailable"),
+            "qtyStep": Decimal("0.001"),
+            "minOrderQty": Decimal("0.001"),
+            "maxOrderQty": Decimal("0"),
+            "minNotionalValue": Decimal("5"),
+            "tickSize": Decimal("0.01"),
+        }
     row = ((payload.get("result") or {}).get("list") or [{}])[0]
     lot = row.get("lotSizeFilter") or {}
     price_filter = row.get("priceFilter") or {}
     return {
+        "ok": bool(row),
+        "reason": "OK" if row else "Instrument not found",
         "qtyStep": Decimal(str(lot.get("qtyStep") or "0.001")),
         "minOrderQty": Decimal(str(lot.get("minOrderQty") or "0.001")),
+        "maxOrderQty": Decimal(str(lot.get("maxOrderQty") or lot.get("maxMktOrderQty") or "0")),
         "minNotionalValue": Decimal(str(lot.get("minNotionalValue") or "5")),
         "tickSize": Decimal(str(price_filter.get("tickSize") or "0.01")),
     }
@@ -450,6 +463,17 @@ def floor_to_step(value, step):
     if step <= 0:
         return qty
     return (qty / step).to_integral_value(rounding=ROUND_DOWN) * step
+
+
+def ceil_to_step(value, step):
+    qty = Decimal(str(value))
+    step = Decimal(str(step))
+    if step <= 0:
+        return qty
+    floored = floor_to_step(qty, step)
+    if floored >= qty:
+        return floored
+    return floored + step
 
 
 def get_wallet_equity():
@@ -472,6 +496,8 @@ def calculate_position_sizing(symbol, state):
         return {"ok": False, "reason": equity_msg, "qty": "0"}
 
     rules = get_instrument_rules(symbol)
+    if not rules.get("ok"):
+        return {"ok": False, "reason": rules.get("reason", "Instrument rules unavailable"), "qty": "0"}
     risk_pct = max(0.01, float(state.get("riskPerTradePct") or 0.5))
     stop_pct = max(0.1, float(state.get("stopLossPct") or 0.8))
     max_allocation = max(1.0, float(state.get("maxAllocationUsdt") or 250))
@@ -485,9 +511,12 @@ def calculate_position_sizing(symbol, state):
     min_notional_qty = Decimal("0")
     if rules["minNotionalValue"] > 0:
         min_notional_qty = Decimal(str(rules["minNotionalValue"])) / Decimal(str(mark))
-        min_notional_qty = floor_to_step(min_notional_qty + rules["qtyStep"], rules["qtyStep"])
+        min_notional_qty = ceil_to_step(min_notional_qty, rules["qtyStep"])
 
     min_qty = max(rules["minOrderQty"], min_notional_qty)
+    max_qty = rules.get("maxOrderQty") or Decimal("0")
+    if max_qty > 0:
+        qty = min(qty, max_qty)
     if qty < min_qty:
         if min_qty * Decimal(str(mark)) <= Decimal(str(max_allocation)):
             qty = min_qty
@@ -500,18 +529,32 @@ def calculate_position_sizing(symbol, state):
                 "markPrice": mark,
                 "minQty": format_qty(min_qty),
                 "maxAllocationUsdt": max_allocation,
+                "minNotionalValue": format_qty(rules["minNotionalValue"]),
             }
+
+    notional = qty * Decimal(str(mark))
+    if rules["minNotionalValue"] > 0 and notional < rules["minNotionalValue"]:
+        return {
+            "ok": False,
+            "reason": "Final qty does not meet min notional",
+            "qty": "0",
+            "notional": format_qty(notional),
+            "minNotionalValue": format_qty(rules["minNotionalValue"]),
+        }
 
     return {
         "ok": True,
         "reason": "Position size approved",
         "qty": format_qty(qty),
+        "notional": format_qty(notional),
         "equity": round(equity, 4),
         "markPrice": mark,
         "riskAmount": round(risk_amount, 4),
         "riskPerTradePct": risk_pct,
         "maxAllocationUsdt": max_allocation,
         "minQty": format_qty(min_qty),
+        "maxQty": format_qty(max_qty) if max_qty > 0 else "unlimited",
+        "minNotionalValue": format_qty(rules["minNotionalValue"]),
         "qtyStep": format_qty(rules["qtyStep"]),
     }
 
@@ -1018,12 +1061,26 @@ def close_partial_position(position, close_pct):
         return {"ok": False, "reason": "No closeable position"}
 
     rules = get_instrument_rules(symbol)
+    if not rules.get("ok"):
+        return {"ok": False, "reason": rules.get("reason", "Instrument rules unavailable")}
     close_ratio = Decimal(str(max(1, min(100, float(close_pct))) / 100))
     close_qty = floor_to_step(size * close_ratio, rules["qtyStep"])
     if close_qty < rules["minOrderQty"] and size >= rules["minOrderQty"]:
         close_qty = min(size, rules["minOrderQty"])
     if close_qty <= 0 or close_qty > size:
         return {"ok": False, "reason": "Partial close qty below exchange minimum"}
+    mark_price = Decimal(str(get_mark_price(symbol) or "0"))
+    close_notional = close_qty * mark_price
+    if mark_price <= 0:
+        return {"ok": False, "reason": "Partial close mark price unavailable"}
+    if close_notional < rules["minNotionalValue"]:
+        return {
+            "ok": False,
+            "reason": "Partial close below exchange min notional",
+            "qty": format_qty(close_qty),
+            "notional": format_qty(close_notional),
+            "minNotionalValue": format_qty(rules["minNotionalValue"]),
+        }
 
     close_side = "Sell" if side == "Buy" else "Buy"
     order = {
@@ -1427,6 +1484,18 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/bybit/wallet":
             payload = bybit_request("GET", "/v5/account/wallet-balance", {"accountType": "UNIFIED"})
             json_response(self, 200, payload)
+            return
+
+        if parsed.path == "/api/bot/sizing":
+            symbol = query.get("symbol", "BTCUSDT").upper()
+            with BOT_LOCK:
+                state = dict(BOT_STATE)
+            sizing = calculate_position_sizing(symbol, state)
+            json_response(self, 200, {
+                "ok": bool(sizing.get("ok")),
+                "symbol": symbol,
+                "sizing": sizing,
+            })
             return
 
         if parsed.path == "/api/bybit/positions":
