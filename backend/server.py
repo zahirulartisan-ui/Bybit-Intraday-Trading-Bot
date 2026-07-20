@@ -15,6 +15,8 @@ from engines.bot_engine import BotEngineV2 as ModularBotEngineV2
 
 
 ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT.parent
+FRONTEND_INDEX = PROJECT_ROOT / "frontend" / "index.html"
 ENV_PATH = ROOT / ".env"
 RECV_WINDOW = "20000"
 TOP_GAINER_REFRESH_SECONDS = 600
@@ -1795,6 +1797,19 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         query = dict(urllib.parse.parse_qsl(parsed.query))
 
+        if parsed.path in ("/", "/index.html", "/app"):
+            if FRONTEND_INDEX.exists():
+                html = FRONTEND_INDEX.read_text(encoding="utf-8")
+                html = html.replace('const apiParam = new URLSearchParams(window.location.search).get("api");', 'const apiParam = new URLSearchParams(window.location.search).get("api") || window.location.origin;')
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(html.encode("utf-8"))
+            else:
+                json_response(self, 404, {"ok": False, "error": "Frontend index not found"})
+            return
+
         if parsed.path == "/api/health":
             cfg = config()
             json_response(self, 200, {
@@ -2059,7 +2074,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8787"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print(f"Bybit demo backend running on http://127.0.0.1:{port}", flush=True)
+    host = os.environ.get("HOST", "0.0.0.0")
+    server = ThreadingHTTPServer((host, port), Handler)
+    print(f"Bybit demo backend running on http://{host}:{port}", flush=True)
     print(f"Reading environment from {ENV_PATH}", flush=True)
     server.serve_forever()

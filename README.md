@@ -37,6 +37,20 @@ If normal Python is unavailable, use the bundled Codex Python path from your mac
 
 4. Open `frontend/index.html`.
 
+## Render Deploy
+
+The repo includes Render-compatible root files:
+
+- `requirements.txt` for the default Render build command.
+- `render.yaml` with `python backend/server.py` as the start command.
+- The backend binds to `0.0.0.0:$PORT` and serves the frontend at `/`.
+
+Set these Render environment variables before live demo testing:
+
+- `BYBIT_API_KEY`
+- `BYBIT_API_SECRET`
+- `BYBIT_BASE_URL=https://api-demo.bybit.com`
+
 ## Engines
 
 Bot Engine V2 has seven layers:
