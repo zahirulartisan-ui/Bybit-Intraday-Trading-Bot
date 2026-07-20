@@ -51,6 +51,15 @@ Bot Engine V2 has seven layers:
 
 The working backend is `backend/server.py`. The `backend/engines/` folder contains the separated engine modules for a clean GitHub project structure and future refactor.
 
+## Frontend Pages
+
+- Dashboard
+- Scanner & Signals
+- Active Trades & Trade Journal
+- Strategy & Performance Analytics
+- Backtest / Paper Replay
+- Settings & System Health / Risk Status
+
 ## Strategy V3
 
 - Trend Following EMA Crossover

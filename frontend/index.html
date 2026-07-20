@@ -151,6 +151,49 @@
       display: none;
     }
 
+    .page-extra {
+      display: none;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    body.page-scanner .main-grid,
+    body.page-trades .main-grid,
+    body.page-analytics .main-grid,
+    body.page-backtest .main-grid {
+      display: none;
+    }
+
+    body.page-scanner #scannerSignalsPage,
+    body.page-trades #tradesJournalPage,
+    body.page-analytics #analyticsPage,
+    body.page-backtest #backtestPage {
+      display: grid;
+    }
+
+    body.page-scanner .health-strip,
+    body.page-trades .health-strip,
+    body.page-analytics .health-strip,
+    body.page-backtest .health-strip {
+      display: grid;
+    }
+
+    .two-col-page {
+      grid-template-columns: minmax(0, 1.1fr) minmax(360px, .9fr);
+      align-items: start;
+    }
+
+    .three-col-page {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: start;
+    }
+
+    .page-note {
+      color: var(--muted);
+      font-size: .9rem;
+      line-height: 1.5;
+    }
+
     .panel {
       border: 1px solid var(--line);
       background: linear-gradient(145deg, rgba(17, 28, 43, .92), rgba(11, 18, 29, .94));
@@ -816,6 +859,11 @@
         grid-template-columns: 1fr;
       }
 
+      .two-col-page,
+      .three-col-page {
+        grid-template-columns: 1fr;
+      }
+
       body.dashboard-view .main-grid,
       body.control-view .main-grid {
         grid-template-columns: 1fr;
@@ -868,7 +916,7 @@
     }
   </style>
 </head>
-<body class="dashboard-view">
+<body class="dashboard-view page-dashboard">
   <main class="shell">
     <section class="topbar" aria-label="Bot overview">
       <div class="brand">
@@ -886,8 +934,12 @@
     </section>
 
     <nav class="page-tabs" aria-label="Pages">
-      <button class="page-tab" type="button" id="dashboardTab" aria-pressed="true">Dashboard</button>
-      <button class="page-tab" type="button" id="controlTab" aria-pressed="false">Control Center</button>
+      <button class="page-tab" type="button" data-page="dashboard" id="dashboardTab" aria-pressed="true">Dashboard</button>
+      <button class="page-tab" type="button" data-page="scanner" id="scannerTab" aria-pressed="false">Scanner & Signals</button>
+      <button class="page-tab" type="button" data-page="trades" id="tradesTab" aria-pressed="false">Active Trades & Journal</button>
+      <button class="page-tab" type="button" data-page="analytics" id="analyticsTab" aria-pressed="false">Strategy Analytics</button>
+      <button class="page-tab" type="button" data-page="backtest" id="backtestTab" aria-pressed="false">Backtest Replay</button>
+      <button class="page-tab" type="button" data-page="settings" id="controlTab" aria-pressed="false">Settings & Health</button>
     </nav>
 
     <section class="health-strip" aria-label="Engine status">
@@ -1309,6 +1361,171 @@
         </section>
       </aside>
     </section>
+
+    <section class="page-extra two-col-page" id="scannerSignalsPage" aria-label="Scanner and signals page">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Scanner & Signals</h2>
+          <span class="tag" id="scannerPageCountdown">Loading</span>
+        </div>
+        <div class="signal-list" id="scannerPageList">
+          <div class="signal">
+            <div>
+              <strong>Loading</strong>
+              <small>Waiting for live scanner data</small>
+            </div>
+            <span class="tag">WAIT</span>
+          </div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Signal Engine Votes</h2>
+          <span class="tag" id="signalVoteTag">Live</span>
+        </div>
+        <div class="panel-body">
+          <div class="engine-grid" id="signalVoteGrid">
+            <div class="engine-card">
+              <span>Signal engines</span>
+              <strong>WAIT</strong>
+              <small>Waiting for router data</small>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section class="page-extra two-col-page" id="tradesJournalPage" aria-label="Active trades and trade journal page">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Active Trades</h2>
+          <span class="tag buy" id="positionsPageCount">Loading</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Pair</th>
+                <th>Side</th>
+                <th class="right">Entry</th>
+                <th class="right">Mark</th>
+                <th class="right">Size</th>
+                <th class="right">PnL</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="positionsPageBody">
+              <tr><td colspan="7" class="muted">Loading live positions...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Trade Journal</h2>
+          <span class="pill">Persistent</span>
+        </div>
+        <div class="panel-body">
+          <div class="timeline" id="journalPageLog">
+            <div class="event">
+              <time>Live</time>
+              <p>No persistent trade journal events yet.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section class="page-extra three-col-page" id="analyticsPage" aria-label="Strategy and performance analytics page">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Performance Analytics</h2>
+          <span class="tag">Live</span>
+        </div>
+        <div class="exchange-grid">
+          <div class="exchange-item">
+            <span>Trades today</span>
+            <strong id="analyticsTradesToday">Loading</strong>
+          </div>
+          <div class="exchange-item">
+            <span>Daily loss used</span>
+            <strong id="analyticsLossUsed">Loading</strong>
+          </div>
+          <div class="exchange-item">
+            <span>Router mode</span>
+            <strong id="analyticsRouterMode">Loading</strong>
+          </div>
+          <div class="exchange-item">
+            <span>Last signal</span>
+            <strong id="analyticsLastSignal">Loading</strong>
+          </div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Strategy Votes</h2>
+          <span class="tag" id="analyticsVoteCount">Loading</span>
+        </div>
+        <div class="panel-body">
+          <div class="engine-grid" id="analyticsStrategyGrid">
+            <div class="engine-card">
+              <span>Strategies</span>
+              <strong>WAIT</strong>
+              <small>Waiting for live engine votes</small>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Engine Health</h2>
+          <span class="tag">V2</span>
+        </div>
+        <div class="exchange-grid" id="analyticsHealthGrid">
+          <div class="exchange-item">
+            <span>Engine status</span>
+            <strong>Loading</strong>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section class="page-extra two-col-page" id="backtestPage" aria-label="Backtest and paper replay page">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Backtest / Paper Replay</h2>
+          <span class="tag">Live candles</span>
+        </div>
+        <div class="panel-body">
+          <div class="split">
+            <div class="field">
+              <label for="replaySymbol">Replay symbol</label>
+              <input id="replaySymbol" type="text" value="BTCUSDT">
+            </div>
+            <div class="field">
+              <label for="replayInterval">Replay timeframe</label>
+              <select id="replayInterval">
+                <option value="5">5m</option>
+                <option value="15">15m</option>
+                <option value="60">1h</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn primary" type="button" id="runReplayBtn">Run candle replay</button>
+          <p class="page-note">Replay uses live Bybit candle data from the backend and summarizes the selected symbol only.</p>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Replay Result</h2>
+          <span class="pill" id="replayResultTag">Idle</span>
+        </div>
+        <div class="panel-body" id="replayResult">
+          <p class="page-note">No replay run yet.</p>
+        </div>
+      </section>
+    </section>
+
     <footer class="footerbar">
       <span><span class="dot"></span> Data source: Bybit Demo</span>
       <span>Uptime <strong id="uptimeValue">00:00:00</strong></span>
@@ -1347,7 +1564,9 @@
     const positionsBody = document.getElementById("positionsBody");
     const positionsCount = document.getElementById("positionsCount");
     const scannerList = document.getElementById("scannerList");
+    const scannerPageList = document.getElementById("scannerPageList");
     const scannerCountdown = document.getElementById("scannerCountdown");
+    const scannerPageCountdown = document.getElementById("scannerPageCountdown");
     const symbolSourceText = document.getElementById("symbolSourceText");
     const symbolUniverseText = document.getElementById("symbolUniverseText");
     const clockPill = document.getElementById("clockPill");
@@ -1361,6 +1580,7 @@
     const apiLatency = document.getElementById("apiLatency");
     const routerStatus = document.getElementById("routerStatus");
     const engineStatusFooter = document.getElementById("engineStatusFooter");
+    const pageTabs = Array.from(document.querySelectorAll(".page-tab"));
     const lifeSignal = document.getElementById("lifeSignal");
     const lifeGuard = document.getElementById("lifeGuard");
     const lifeOrder = document.getElementById("lifeOrder");
@@ -1379,6 +1599,22 @@
     const engineRisk = document.getElementById("engineRisk");
     const engineTradeManagement = document.getElementById("engineTradeManagement");
     const engineJournal = document.getElementById("engineJournal");
+    const signalVoteGrid = document.getElementById("signalVoteGrid");
+    const signalVoteTag = document.getElementById("signalVoteTag");
+    const positionsPageBody = document.getElementById("positionsPageBody");
+    const positionsPageCount = document.getElementById("positionsPageCount");
+    const journalPageLog = document.getElementById("journalPageLog");
+    const analyticsTradesToday = document.getElementById("analyticsTradesToday");
+    const analyticsLossUsed = document.getElementById("analyticsLossUsed");
+    const analyticsRouterMode = document.getElementById("analyticsRouterMode");
+    const analyticsLastSignal = document.getElementById("analyticsLastSignal");
+    const analyticsVoteCount = document.getElementById("analyticsVoteCount");
+    const analyticsStrategyGrid = document.getElementById("analyticsStrategyGrid");
+    const analyticsHealthGrid = document.getElementById("analyticsHealthGrid");
+    const replaySymbol = document.getElementById("replaySymbol");
+    const replayInterval = document.getElementById("replayInterval");
+    const replayResult = document.getElementById("replayResult");
+    const replayResultTag = document.getElementById("replayResultTag");
     const apiParam = new URLSearchParams(window.location.search).get("api");
     const storedApiBase = localStorage.getItem("bybitBotApiBase");
     const isLocalHost = ["127.0.0.1", "localhost"].includes(window.location.hostname);
@@ -1444,13 +1680,16 @@
     }
 
     function updateCountdowns() {
+      let label = "";
       if (scannerUniverse && scannerUniverse.nextRefreshAt) {
         const nextUniverseMs = Math.max(0, (Number(scannerUniverse.nextRefreshAt) * 1000) - Date.now());
         const nextScanMs = Math.max(0, nextScannerRefreshAt - Date.now());
-        scannerCountdown.textContent = `Scan ${shortDuration(nextScanMs)} | Top ${shortDuration(nextUniverseMs)}`;
+        label = `Scan ${shortDuration(nextScanMs)} | Top ${shortDuration(nextUniverseMs)}`;
       } else {
-        scannerCountdown.textContent = `Scan ${shortDuration(nextScannerRefreshAt - Date.now())}`;
+        label = `Scan ${shortDuration(nextScannerRefreshAt - Date.now())}`;
       }
+      scannerCountdown.textContent = label;
+      scannerPageCountdown.textContent = label;
     }
 
     function clearChart(message) {
@@ -1549,10 +1788,9 @@
       log.prepend(item);
     }
 
-    function renderJournal(entries) {
-      const log = document.getElementById("log");
+    function renderJournalInto(target, entries) {
       if (!Array.isArray(entries) || !entries.length) {
-        log.innerHTML = `
+        target.innerHTML = `
           <div class="event">
             <time>Live</time>
             <p>No persistent trade journal events yet.</p>
@@ -1560,7 +1798,7 @@
         `;
         return;
       }
-      log.innerHTML = "";
+      target.innerHTML = "";
       entries.slice().reverse().forEach((entry) => {
         const item = document.createElement("div");
         item.className = "event";
@@ -1574,8 +1812,14 @@
         const retMsg = result.retMsg ? `: ${result.retMsg}` : "";
         body.textContent = `${entry.event || "event"}${symbol}${signal ? ` ${signal}` : ""}${retMsg}`;
         item.append(time, body);
-        log.appendChild(item);
+        target.appendChild(item);
       });
+    }
+
+    function renderJournal(entries) {
+      const log = document.getElementById("log");
+      renderJournalInto(log, entries);
+      renderJournalInto(journalPageLog, entries);
     }
 
     async function api(path, options = {}) {
@@ -1677,22 +1921,28 @@
         const result = await api(`/api/bybit/positions?symbol=${encodeURIComponent(symbol)}`);
         if (result.retCode !== 0) {
           positionsBody.innerHTML = `<tr><td colspan="7" class="muted">${result.retMsg || "Position request failed"}</td></tr>`;
+          positionsPageBody.innerHTML = `<tr><td colspan="7" class="muted">${result.retMsg || "Position request failed"}</td></tr>`;
           positionsCount.textContent = "Error";
+          positionsPageCount.textContent = "Error";
           floatingPnl.textContent = "Unavailable";
           return;
         }
         const rows = ((result.result || {}).list || []).filter((item) => Number(item.size || 0) !== 0);
         positionsCount.textContent = `${rows.length} active`;
+        positionsPageCount.textContent = `${rows.length} active`;
         openTradesValue.textContent = String(rows.length);
         openTradesMeta.textContent = rows.length ? "Live positions" : "No open position";
         if (!rows.length) {
-          positionsBody.innerHTML = `<tr><td colspan="7"><div class="empty-state"><strong>No open position for ${symbol}</strong><span>The bot will open positions automatically when signals are confirmed.</span></div></td></tr>`;
+          const empty = `<tr><td colspan="7"><div class="empty-state"><strong>No open position for ${symbol}</strong><span>The bot will open positions automatically when signals are confirmed.</span></div></td></tr>`;
+          positionsBody.innerHTML = empty;
+          positionsPageBody.innerHTML = empty;
           floatingPnl.textContent = "$0.00";
           floatingMeta.textContent = "No open position";
           return;
         }
         let totalPnl = 0;
         positionsBody.innerHTML = "";
+        positionsPageBody.innerHTML = "";
         rows.forEach((position) => {
           const pnl = Number(position.unrealisedPnl || 0);
           totalPnl += pnl;
@@ -1707,13 +1957,16 @@
             <td><span class="tag">${position.positionStatus || "Open"}</span></td>
           `;
           positionsBody.appendChild(tr);
+          positionsPageBody.appendChild(tr.cloneNode(true));
         });
         floatingPnl.textContent = money(totalPnl, 4);
         floatingPnl.className = totalPnl >= 0 ? "green" : "red";
         floatingMeta.textContent = `${rows.length} open position`;
       } catch (error) {
         positionsBody.innerHTML = `<tr><td colspan="7" class="muted">Backend position request failed</td></tr>`;
+        positionsPageBody.innerHTML = `<tr><td colspan="7" class="muted">Backend position request failed</td></tr>`;
         positionsCount.textContent = "Error";
+        positionsPageCount.textContent = "Error";
       }
     }
 
@@ -1727,10 +1980,13 @@
         updateUniverseText(scannerUniverse);
         updateCountdowns();
         if (!result.ok) {
-          scannerList.innerHTML = `<div class="signal"><div><strong>Scanner unavailable</strong><small>Backend scanner request failed</small></div><span class="tag">WAIT</span></div>`;
+          const unavailable = `<div class="signal"><div><strong>Scanner unavailable</strong><small>Backend scanner request failed</small></div><span class="tag">WAIT</span></div>`;
+          scannerList.innerHTML = unavailable;
+          scannerPageList.innerHTML = unavailable;
           return;
         }
         scannerList.innerHTML = "";
+        scannerPageList.innerHTML = "";
         if (result.rows && result.rows[0]) setActiveSymbol(result.rows[0].symbol);
         result.rows.forEach((row) => {
           const item = document.createElement("div");
@@ -1746,9 +2002,12 @@
             <span class="tag ${tagClass}">${row.signal}</span>
           `;
           scannerList.appendChild(item);
+          scannerPageList.appendChild(item.cloneNode(true));
         });
       } catch (error) {
-        scannerList.innerHTML = `<div class="signal"><div><strong>Scanner unavailable</strong><small>Backend scanner request failed</small></div><span class="tag">WAIT</span></div>`;
+        const unavailable = `<div class="signal"><div><strong>Scanner unavailable</strong><small>Backend scanner request failed</small></div><span class="tag">WAIT</span></div>`;
+        scannerList.innerHTML = unavailable;
+        scannerPageList.innerHTML = unavailable;
       }
     }
 
@@ -1777,6 +2036,51 @@
       setLifecycleStep(lifeStatus, "Status", lifecycle.status || "idle");
     }
 
+    function renderVoteGrid(target, votes) {
+      target.innerHTML = "";
+      if (!Array.isArray(votes) || !votes.length) {
+        target.innerHTML = `<div class="engine-card"><span>Signal engines</span><strong>WAIT</strong><small>Waiting for live engine votes</small></div>`;
+        return;
+      }
+      votes.forEach((vote) => {
+        const card = document.createElement("div");
+        card.className = "engine-card";
+        const name = document.createElement("span");
+        name.textContent = vote.engine;
+        const signal = document.createElement("strong");
+        signal.textContent = vote.signal;
+        if (vote.signal === "Buy") signal.className = "green";
+        if (vote.signal === "Sell") signal.className = "red";
+        const reason = document.createElement("small");
+        reason.textContent = vote.reason;
+        card.append(name, signal, reason);
+        target.append(card);
+      });
+    }
+
+    function renderAnalytics(bot) {
+      const dailyRisk = bot.dailyRisk || {};
+      const votes = bot.engineVotes || [];
+      const overview = bot.engineOverview || {};
+      const status = overview.status || bot.engineStatus || {};
+      analyticsTradesToday.textContent = `${dailyRisk.tradesToday || 0} / ${dailyRisk.maxTradesPerDay || bot.maxTradesPerDay || 0}`;
+      analyticsLossUsed.textContent = `$${numberText(dailyRisk.lossUsed || 0, 2)} / $${numberText(dailyRisk.dailyLossCapUsdt || bot.dailyLossCapUsdt || 0, 2)}`;
+      analyticsRouterMode.textContent = bot.mode || "balanced";
+      analyticsLastSignal.textContent = bot.lastSignal || "WAIT";
+      analyticsVoteCount.textContent = `${votes.length} engines`;
+      renderVoteGrid(analyticsStrategyGrid, votes);
+      analyticsHealthGrid.innerHTML = "";
+      Object.entries(status).forEach(([name, value]) => {
+        const item = document.createElement("div");
+        item.className = "exchange-item";
+        item.innerHTML = `<span>${name}</span><strong>${value || "idle"}</strong>`;
+        analyticsHealthGrid.appendChild(item);
+      });
+      if (!analyticsHealthGrid.children.length) {
+        analyticsHealthGrid.innerHTML = `<div class="exchange-item"><span>Engine status</span><strong>Waiting</strong></div>`;
+      }
+    }
+
     function renderBotStatus(bot) {
       autoStatus.textContent = bot.enabled ? "Running" : "Stopped";
       autoSignal.textContent = bot.lastSignal || "WAIT";
@@ -1795,6 +2099,7 @@
       const guardText = guard.ok === false ? ` | guard: ${guard.reason || "blocked"}` : "";
       autoReason.textContent = `${displaySymbol} | ${mode}${sizeText}: ${bot.lastReason || "No signal yet."}${guardText} (${router.confidence || 0}/${router.requiredVotes || 1} votes)`;
       renderLifecycle(bot.orderLifecycle || {});
+      renderAnalytics(bot);
       chartSignal.textContent = `Signal: ${bot.lastSignal || "WAIT"}`;
       routerStatus.textContent = bot.lastSignal || "WAIT";
       engineStatusFooter.textContent = bot.enabled ? "Running" : "Stopped";
@@ -1825,21 +2130,9 @@
       botEngineVersion.textContent = overview.version ? `v${overview.version}${overview.runtime ? ` ${overview.runtime}` : ""}` : "V2";
       if (bot.mode) document.getElementById("routerMode").value = bot.mode;
       if (Array.isArray(bot.engineVotes) && bot.engineVotes.length) {
-        engineGrid.innerHTML = "";
-        bot.engineVotes.forEach((vote) => {
-          const card = document.createElement("div");
-          card.className = "engine-card";
-          const name = document.createElement("span");
-          name.textContent = vote.engine;
-          const signal = document.createElement("strong");
-          signal.textContent = vote.signal;
-          if (vote.signal === "Buy") signal.className = "green";
-          if (vote.signal === "Sell") signal.className = "red";
-          const reason = document.createElement("small");
-          reason.textContent = vote.reason;
-          card.append(name, signal, reason);
-          engineGrid.append(card);
-        });
+        signalVoteTag.textContent = `${bot.engineVotes.length} engines`;
+        renderVoteGrid(engineGrid, bot.engineVotes);
+        renderVoteGrid(signalVoteGrid, bot.engineVotes);
       }
     }
 
@@ -1849,6 +2142,44 @@
         if (result.ok) renderBotStatus(result.bot);
       } catch (error) {
         autoReason.textContent = "Could not refresh auto trader status.";
+      }
+    }
+
+    async function runReplay() {
+      const symbol = (replaySymbol.value || activeSymbol()).trim().toUpperCase();
+      const interval = replayInterval.value || "5";
+      replayResultTag.textContent = "Running";
+      replayResult.innerHTML = `<p class="page-note">Loading live candles for ${symbol}...</p>`;
+      try {
+        const result = await api(`/api/bybit/kline?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`);
+        if (!result.ok || !Array.isArray(result.candles) || !result.candles.length) {
+          replayResultTag.textContent = "No data";
+          replayResult.innerHTML = `<p class="page-note">${result.message || "No live candle data available for replay."}</p>`;
+          return;
+        }
+        const candles = result.candles;
+        const closes = candles.map((item) => Number(item.close)).filter(Number.isFinite);
+        const highs = candles.map((item) => Number(item.high)).filter(Number.isFinite);
+        const lows = candles.map((item) => Number(item.low)).filter(Number.isFinite);
+        const volume = candles.reduce((sum, item) => sum + (Number(item.volume) || 0), 0);
+        const first = closes[0];
+        const last = closes[closes.length - 1];
+        const movePct = first ? ((last - first) / first) * 100 : 0;
+        replayResultTag.textContent = `${candles.length} candles`;
+        replayResult.innerHTML = `
+          <div class="exchange-grid">
+            <div class="exchange-item"><span>Symbol</span><strong>${symbol}</strong></div>
+            <div class="exchange-item"><span>Timeframe</span><strong>${interval === "60" ? "1h" : `${interval}m`}</strong></div>
+            <div class="exchange-item"><span>Candles</span><strong>${candles.length}</strong></div>
+            <div class="exchange-item"><span>Close move</span><strong class="${movePct >= 0 ? "green" : "red"}">${numberText(movePct, 2)}%</strong></div>
+            <div class="exchange-item"><span>High</span><strong>${numberText(Math.max(...highs), 6)}</strong></div>
+            <div class="exchange-item"><span>Low</span><strong>${numberText(Math.min(...lows), 6)}</strong></div>
+            <div class="exchange-item"><span>Volume</span><strong>${numberText(volume, 2)}</strong></div>
+          </div>
+        `;
+      } catch (error) {
+        replayResultTag.textContent = "Error";
+        replayResult.innerHTML = `<p class="page-note">Replay request failed: ${error.message}</p>`;
       }
     }
 
@@ -1992,20 +2323,20 @@
     document.getElementById("liveMode").addEventListener("click", () => {
       notice.textContent = "Real trading remains locked. Use demo first, then add stronger server-side risk checks.";
     });
-    dashboardTab.addEventListener("click", () => {
-      document.body.classList.add("dashboard-view");
-      document.body.classList.remove("control-view");
-      dashboardTab.setAttribute("aria-pressed", "true");
-      controlTab.setAttribute("aria-pressed", "false");
-      refreshLiveData();
-    });
-    controlTab.addEventListener("click", () => {
-      document.body.classList.add("control-view");
-      document.body.classList.remove("dashboard-view");
-      controlTab.setAttribute("aria-pressed", "true");
-      dashboardTab.setAttribute("aria-pressed", "false");
+    function showPage(page) {
+      document.body.classList.remove("dashboard-view", "control-view", "page-dashboard", "page-scanner", "page-trades", "page-analytics", "page-backtest", "page-settings");
+      document.body.classList.add(`page-${page}`);
+      document.body.classList.add(page === "settings" ? "control-view" : "dashboard-view");
+      pageTabs.forEach((tab) => tab.setAttribute("aria-pressed", tab.dataset.page === page ? "true" : "false"));
+      if (page === "dashboard" || page === "scanner" || page === "trades" || page === "analytics" || page === "backtest") refreshLiveData();
       refreshBotStatus();
+      refreshJournal();
+    }
+
+    pageTabs.forEach((tab) => {
+      tab.addEventListener("click", () => showPage(tab.dataset.page || "dashboard"));
     });
+    document.getElementById("runReplayBtn").addEventListener("click", runReplay);
     document.getElementById("timeframe").addEventListener("change", refreshLiveData);
     document.getElementById("routerMode").addEventListener("change", refreshScanner);
     checkBackend();
