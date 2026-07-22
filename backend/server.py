@@ -20,10 +20,12 @@ FRONTEND_INDEX = PROJECT_ROOT / "frontend" / "index.html"
 ENV_PATH = ROOT / ".env"
 RECV_WINDOW = "20000"
 TOP_GAINER_REFRESH_SECONDS = 600
-MIN_TURNOVER_24H = 500000
-MAX_SPREAD_PCT = 0.35
-MAX_TOP_GAINER_CHANGE_PCT = 65
-MIN_TOP_GAINER_CHANGE_PCT = 1
+MIN_TURNOVER_24H = 2000000
+MAX_SPREAD_PCT = 0.18
+MAX_TOP_GAINER_CHANGE_PCT = 35
+MIN_TOP_GAINER_CHANGE_PCT = 2
+MIN_LAST_PRICE = 0.01
+MIN_VOLUME_24H_UNITS = 250000
 BOT_SCAN_SECONDS = 30
 DEFAULT_SCAN_SYMBOLS = [
     "BTCUSDT",
@@ -386,6 +388,7 @@ def top_gainer_universe(force=False, limit=10):
                 continue
             last_price = numeric(item.get("lastPrice"))
             turnover = numeric(item.get("turnover24h"))
+            volume_24h = numeric(item.get("volume24h"))
             change = numeric(item.get("price24hPcnt"))
             bid = numeric(item.get("bid1Price"))
             ask = numeric(item.get("ask1Price"))
@@ -394,8 +397,12 @@ def top_gainer_universe(force=False, limit=10):
             change_pct = change * 100
             spread_pct = ((ask - bid) / last_price) * 100 if ask > 0 and bid > 0 and ask >= bid else 0
             filters = []
+            if last_price < MIN_LAST_PRICE:
+                filters.append("too_cheap")
             if turnover < MIN_TURNOVER_24H:
                 filters.append("low_turnover")
+            if volume_24h < MIN_VOLUME_24H_UNITS:
+                filters.append("low_units")
             if spread_pct > MAX_SPREAD_PCT:
                 filters.append("wide_spread")
             if change_pct > MAX_TOP_GAINER_CHANGE_PCT:
@@ -408,6 +415,7 @@ def top_gainer_universe(force=False, limit=10):
                 "symbol": symbol,
                 "changePct": change_pct,
                 "turnover24h": turnover,
+                "volume24h": volume_24h,
                 "spreadPct": round(spread_pct, 4),
                 "lastPrice": last_price,
             })
@@ -763,24 +771,49 @@ def rsi_divergence_engine(tf1h, tf15m, tf5m):
     if len(rsi_values) < 10:
         return vote("RSI Divergence", "WAIT", "Not enough RSI history")
 
-    price_now = closes15[-1]
-    price_prev = closes15[-8]
+    recent15 = tf15m[-3:]
+    prior15 = tf15m[-10:-7]
+    price_now = sum(item["close"] for item in recent15) / len(recent15)
+    price_prev = sum(item["close"] for item in prior15) / len(prior15)
     rsi_now = rsi_values[-1]
     rsi_prev = rsi_values[-8]
     entry = candle_direction(tf5m[-1])
     rsi_delta = abs(rsi_now - rsi_prev)
-    volume_ok = tf5m[-1]["volume"] >= avg_volume(tf5m, 20) * 0.9
+    price_delta_pct = abs(((price_now - price_prev) / price_prev) * 100) if price_prev else 0
+    volume_ok = tf5m[-1]["volume"] >= avg_volume(tf5m, 20) * 1.05
     body = abs(tf5m[-1]["close"] - tf5m[-1]["open"])
     candle_range = max(tf5m[-1]["high"] - tf5m[-1]["low"], 0.00000001)
     reversal_body_ok = (body / candle_range) >= 0.35
+    prev_entry = candle_direction(tf5m[-2]) if len(tf5m) >= 2 else "WAIT"
+    follow_through_ok = entry == prev_entry and entry in ("Buy", "Sell")
 
-    bearish = price_now > price_prev and rsi_now < rsi_prev and rsi_now >= 55 and rsi_delta >= 4 and entry == "Sell" and volume_ok and reversal_body_ok
-    bullish = price_now < price_prev and rsi_now > rsi_prev and rsi_now <= 45 and rsi_delta >= 4 and entry == "Buy" and volume_ok and reversal_body_ok
+    bearish = (
+        price_now > price_prev
+        and price_delta_pct >= 0.35
+        and rsi_now < rsi_prev
+        and rsi_now >= 58
+        and rsi_delta >= 5
+        and entry == "Sell"
+        and volume_ok
+        and reversal_body_ok
+        and follow_through_ok
+    )
+    bullish = (
+        price_now < price_prev
+        and price_delta_pct >= 0.35
+        and rsi_now > rsi_prev
+        and rsi_now <= 42
+        and rsi_delta >= 5
+        and entry == "Buy"
+        and volume_ok
+        and reversal_body_ok
+        and follow_through_ok
+    )
     if bearish and direction != "Buy":
         return vote("RSI Divergence", "Sell", f"15M bearish divergence confirmed, RSI {rsi_now:.1f}, delta {rsi_delta:.1f}", rsi_delta)
     if bullish and direction != "Sell":
         return vote("RSI Divergence", "Buy", f"15M bullish divergence confirmed, RSI {rsi_now:.1f}, delta {rsi_delta:.1f}", rsi_delta)
-    return vote("RSI Divergence", "WAIT", f"No confirmed divergence, RSI {rsi_now:.1f}, delta {rsi_delta:.1f}")
+    return vote("RSI Divergence", "WAIT", f"No confirmed divergence, RSI {rsi_now:.1f}, delta {rsi_delta:.1f}, move {price_delta_pct:.2f}%")
 
 
 def vwap_bounce_engine(tf1h, tf15m, tf5m):
