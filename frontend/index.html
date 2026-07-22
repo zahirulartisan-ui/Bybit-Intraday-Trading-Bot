@@ -1050,7 +1050,7 @@
 
             <div class="field">
               <label for="maxOpenPositions">Max open positions</label>
-              <input id="maxOpenPositions" type="number" value="1" min="1" max="5" step="1">
+                <input id="maxOpenPositions" type="number" value="2" min="1" max="5" step="1">
             </div>
 
             <div class="split">
@@ -1060,7 +1060,7 @@
               </div>
               <div class="field">
                 <label for="maxTradesPerDay">Max trades/day</label>
-                <input id="maxTradesPerDay" type="number" value="5" min="1" max="50" step="1">
+                <input id="maxTradesPerDay" type="number" value="12" min="1" max="50" step="1">
               </div>
             </div>
 
@@ -2340,7 +2340,7 @@
             trailingStopEnabled: true,
             trailingStopTriggerPct,
             trailingStopDistancePct,
-            cooldownSeconds: 300,
+            cooldownSeconds: 120,
             mode
           })
         });

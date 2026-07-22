@@ -21,12 +21,12 @@ FRONTEND_INDEX = PROJECT_ROOT / "frontend" / "index.html"
 ENV_PATH = ROOT / ".env"
 RECV_WINDOW = "20000"
 TOP_GAINER_REFRESH_SECONDS = 600
-MIN_TURNOVER_24H = 2000000
-MAX_SPREAD_PCT = 0.18
-MAX_TOP_GAINER_CHANGE_PCT = 35
-MIN_TOP_GAINER_CHANGE_PCT = 2
+MIN_TURNOVER_24H = 750000
+MAX_SPREAD_PCT = 0.25
+MAX_TOP_GAINER_CHANGE_PCT = 45
+MIN_TOP_GAINER_CHANGE_PCT = 1.2
 MIN_LAST_PRICE = 0.01
-MIN_VOLUME_24H_UNITS = 250000
+MIN_VOLUME_24H_UNITS = 100000
 BOT_SCAN_SECONDS = 30
 DEFAULT_SCAN_SYMBOLS = [
     "BTCUSDT",
@@ -56,9 +56,9 @@ BOT_STATE = {
     "qty": "0.001",
     "maxAllocationUsdt": 250,
     "riskPerTradePct": 0.5,
-    "maxOpenPositions": 1,
+    "maxOpenPositions": 2,
     "dailyLossCapUsdt": 25,
-    "maxTradesPerDay": 5,
+    "maxTradesPerDay": 12,
     "breakevenEnabled": True,
     "breakevenTriggerPct": 0.6,
     "partialTpEnabled": True,
@@ -69,7 +69,7 @@ BOT_STATE = {
     "trailingStopDistancePct": 0.35,
     "stopLossPct": 0.8,
     "takeProfitPct": 1.6,
-    "cooldownSeconds": 300,
+    "cooldownSeconds": 120,
     "lastTradeAt": 0,
     "lastSignal": "WAIT",
     "lastReason": "Auto trader is stopped.",
@@ -738,7 +738,7 @@ def trend_following_engine(tf1h, tf15m, tf5m):
     ema20_15 = ema(closes15, 20)
     if not ema20_15:
         return vote("Trend Follow", "WAIT", "15M EMA setup unavailable")
-    pullback = near_value(tf15m[-1]["close"], ema20_15[-1], 0.25)
+    pullback = near_value(tf15m[-1]["close"], ema20_15[-1], 0.4)
     entry = candle_direction(tf5m[-1])
     volume_ok = tf5m[-1]["volume"] >= avg_volume(tf5m, 20) * 0.85
 
@@ -754,7 +754,7 @@ def sr_breakout_engine(tf1h, tf15m, tf5m):
     range15 = max(item["high"] for item in tf15m[-8:]) - min(item["low"] for item in tf15m[-8:])
     avg_range15 = sum(item["high"] - item["low"] for item in tf15m[-30:]) / 30
     consolidating = range15 <= avg_range15 * 4
-    volume_ok = last5["volume"] >= avg_volume(tf5m, 20) * 1.15
+    volume_ok = last5["volume"] >= avg_volume(tf5m, 20) * 1.05
 
     if consolidating and last5["close"] > resistance and volume_ok:
         return vote("S/R Breakout", "Buy", "1H resistance breakout, 15M tight range, 5M volume confirm", last5["close"] - resistance)
@@ -781,19 +781,19 @@ def rsi_divergence_engine(tf1h, tf15m, tf5m):
     entry = candle_direction(tf5m[-1])
     rsi_delta = abs(rsi_now - rsi_prev)
     price_delta_pct = abs(((price_now - price_prev) / price_prev) * 100) if price_prev else 0
-    volume_ok = tf5m[-1]["volume"] >= avg_volume(tf5m, 20) * 1.05
+    volume_ok = tf5m[-1]["volume"] >= avg_volume(tf5m, 20) * 1.0
     body = abs(tf5m[-1]["close"] - tf5m[-1]["open"])
     candle_range = max(tf5m[-1]["high"] - tf5m[-1]["low"], 0.00000001)
-    reversal_body_ok = (body / candle_range) >= 0.35
+    reversal_body_ok = (body / candle_range) >= 0.25
     prev_entry = candle_direction(tf5m[-2]) if len(tf5m) >= 2 else "WAIT"
-    follow_through_ok = entry == prev_entry and entry in ("Buy", "Sell")
+    follow_through_ok = entry in ("Buy", "Sell") and (prev_entry == entry or prev_entry == "WAIT")
 
     bearish = (
         price_now > price_prev
         and price_delta_pct >= 0.35
         and rsi_now < rsi_prev
-        and rsi_now >= 58
-        and rsi_delta >= 5
+        and rsi_now >= 55
+        and rsi_delta >= 4
         and entry == "Sell"
         and volume_ok
         and reversal_body_ok
@@ -803,8 +803,8 @@ def rsi_divergence_engine(tf1h, tf15m, tf5m):
         price_now < price_prev
         and price_delta_pct >= 0.35
         and rsi_now > rsi_prev
-        and rsi_now <= 42
-        and rsi_delta >= 5
+        and rsi_now <= 45
+        and rsi_delta >= 4
         and entry == "Buy"
         and volume_ok
         and reversal_body_ok
@@ -825,9 +825,9 @@ def vwap_bounce_engine(tf1h, tf15m, tf5m):
     if total_volume <= 0:
         return vote("VWAP Bounce", "WAIT", "15M VWAP volume unavailable")
     vwap = sum(((item["high"] + item["low"] + item["close"]) / 3) * item["volume"] for item in tf15m[-40:]) / total_volume
-    near_vwap = near_value(tf15m[-1]["close"], vwap, 0.2)
+    near_vwap = near_value(tf15m[-1]["close"], vwap, 0.3)
     entry = candle_direction(tf5m[-1])
-    volume_ok = tf5m[-1]["volume"] >= avg_volume(tf5m, 20) * 0.9
+    volume_ok = tf5m[-1]["volume"] >= avg_volume(tf5m, 20) * 0.85
 
     if near_vwap and entry == direction and volume_ok:
         return vote("VWAP Bounce", direction, f"15M near VWAP, 5M {direction} bounce/rejection", abs(tf15m[-1]["close"] - vwap))
@@ -840,7 +840,7 @@ def orb_engine(tf1h, tf15m, tf5m):
     low = opening["low"]
     last15 = tf15m[-1]
     last5 = tf5m[-1]
-    volume_ok = last5["volume"] >= avg_volume(tf5m, 20) * 1.1
+    volume_ok = last5["volume"] >= avg_volume(tf5m, 20) * 1.0
 
     if last15["close"] > high and last5["close"] > high and volume_ok:
         return vote("ORB", "Buy", "1H opening range high broken, 15M/5M confirmed", last5["close"] - high)
