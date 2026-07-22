@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import threading
 import time
 import urllib.error
@@ -1184,9 +1185,20 @@ def existing_position_guard(symbol, signal, state):
         }
     max_open = max(1, int(state.get("maxOpenPositions") or 1))
     if open_count >= max_open:
+        all_positions_payload = bybit_request("GET", "/v5/position/list", {"category": "linear", "settleCoin": "USDT"})
+        active_symbols = []
+        if all_positions_payload.get("retCode") == 0:
+            for row in (all_positions_payload.get("result") or {}).get("list") or []:
+                try:
+                    size = abs(float(row.get("size") or 0))
+                except (TypeError, ValueError):
+                    size = 0
+                if size > 0 and row.get("symbol"):
+                    active_symbols.append(str(row.get("symbol")))
+        symbol_text = ", ".join(active_symbols[:5]) if active_symbols else symbol
         return {
             "ok": False,
-            "reason": f"Max open positions reached ({open_count}/{max_open})",
+            "reason": f"Max open positions reached ({open_count}/{max_open}); active: {symbol_text}",
             "positions": summaries,
             "openPositions": open_count,
             "maxOpenPositions": max_open,
@@ -1268,7 +1280,7 @@ def close_partial_position(position, close_pct):
         "qty": format_qty(close_qty),
         "reduceOnly": True,
         "timeInForce": "IOC",
-        "orderLinkId": f"codex-partial-{int(time.time())}",
+        "orderLinkId": generate_order_link_id("partial"),
     }
     if position.get("positionIdx") is not None:
         order["positionIdx"] = int(position.get("positionIdx") or 0)
@@ -1584,6 +1596,12 @@ def tpsl_prices(symbol, side, stop_loss_pct, take_profit_pct):
     return format_price(symbol, stop_loss), format_price(symbol, take_profit)
 
 
+def generate_order_link_id(source):
+    prefix = "".join(ch.lower() for ch in str(source or "auto") if ch.isalnum())[:8] or "auto"
+    nonce = secrets.token_hex(3)
+    return f"cdx-{prefix}-{int(time.time() * 1000)}-{nonce}"[:36]
+
+
 def place_demo_order(symbol, side, qty, source, stop_loss_pct=None, take_profit_pct=None):
     order = {
         "category": "linear",
@@ -1592,7 +1610,7 @@ def place_demo_order(symbol, side, qty, source, stop_loss_pct=None, take_profit_
         "orderType": "Market",
         "qty": qty,
         "timeInForce": "IOC",
-        "orderLinkId": f"codex-{source}-{int(time.time())}",
+        "orderLinkId": generate_order_link_id(source),
     }
 
     if stop_loss_pct is not None and take_profit_pct is not None:
@@ -1681,7 +1699,7 @@ def close_symbol_positions(symbol):
             "qty": str(position.get("size")),
             "reduceOnly": True,
             "timeInForce": "IOC",
-            "orderLinkId": f"codex-close-{int(time.time())}",
+            "orderLinkId": generate_order_link_id("close"),
         }
         if position.get("positionIdx") is not None:
             close_order["positionIdx"] = int(position.get("positionIdx") or 0)

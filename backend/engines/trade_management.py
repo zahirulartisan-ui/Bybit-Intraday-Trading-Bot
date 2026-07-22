@@ -1,3 +1,4 @@
+import secrets
 import time
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -43,6 +44,11 @@ class TradeManagementEngine:
             take_profit = mark * (1 - (float(take_profit_pct) / 100))
         return self.format_price(symbol, stop_loss), self.format_price(symbol, take_profit)
 
+    def order_link_id(self, source):
+        prefix = "".join(ch.lower() for ch in str(source or "auto") if ch.isalnum())[:8] or "auto"
+        nonce = secrets.token_hex(3)
+        return f"cdx-{prefix}-{int(time.time() * 1000)}-{nonce}"[:36]
+
     def place_order(self, symbol, side, qty, source, stop_loss_pct=None, take_profit_pct=None):
         order = {
             "category": "linear",
@@ -51,7 +57,7 @@ class TradeManagementEngine:
             "orderType": "Market",
             "qty": qty,
             "timeInForce": "IOC",
-            "orderLinkId": f"codex-{source}-{int(time.time())}",
+            "orderLinkId": self.order_link_id(source),
         }
         if stop_loss_pct is not None and take_profit_pct is not None:
             stop_loss, take_profit = self.tpsl_prices(symbol, side, stop_loss_pct, take_profit_pct)
@@ -83,7 +89,7 @@ class TradeManagementEngine:
                 "qty": str(position.get("size")),
                 "reduceOnly": True,
                 "timeInForce": "IOC",
-                "orderLinkId": f"codex-close-{int(time.time())}",
+                "orderLinkId": self.order_link_id("close"),
             }
             if position.get("positionIdx") is not None:
                 close_order["positionIdx"] = int(position.get("positionIdx") or 0)
