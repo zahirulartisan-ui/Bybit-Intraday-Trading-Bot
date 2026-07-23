@@ -250,6 +250,7 @@ def load_env():
 
 
 load_env()
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 
 
 def config():
@@ -267,7 +268,7 @@ def json_response(handler, status, payload):
     handler.send_header("Content-Length", str(len(body)))
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-    handler.send_header("Access-Control-Allow-Headers", "Content-Type")
+    handler.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -1850,6 +1851,11 @@ def ensure_bot_thread():
 
 
 class Handler(BaseHTTPRequestHandler):
+    def is_authorized(self):
+        expected = f"Bearer {ADMIN_TOKEN}"
+        supplied = self.headers.get("Authorization", "")
+        return bool(ADMIN_TOKEN) and secrets.compare_digest(supplied, expected)
+
     def log_message(self, fmt, *args):
         print("%s - %s" % (self.address_string(), fmt % args))
 
@@ -1857,7 +1863,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
     def do_GET(self):
@@ -2015,6 +2021,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
+
+        if not self.is_authorized():
+            json_response(self, 401, {"ok": False, "error": "Unauthorized"})
+            return
 
         try:
             payload = read_json(self)
