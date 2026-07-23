@@ -650,6 +650,13 @@
       line-height: 1.45;
     }
 
+    .notice.locked {
+      border-color: rgba(255, 91, 110, .4);
+      background: rgba(255, 91, 110, .12);
+      color: var(--red);
+      font-weight: bold;
+    }
+
     .auto-state {
       display: grid;
       gap: 8px;
@@ -1011,6 +1018,11 @@
             </div>
 
             <div class="field">
+              <label for="manualTestSymbol">Manual Test Symbol</label>
+              <input id="manualTestSymbol" type="text" value="BTCUSDT" placeholder="Enter manual test symbol...">
+            </div>
+
+            <div class="field">
               <label for="strategy">Strategy</label>
               <select id="strategy">
                 <option>V3 router: all 5 strategies</option>
@@ -1147,6 +1159,23 @@
             <div class="btn-row">
               <button class="btn" type="button" id="startBtn">Manual buy test</button>
               <button class="btn" type="button" id="manageStopsBtn">Manage stops</button>
+            </div>
+
+            <!-- Sizing Preview Panel -->
+            <div id="sizingPreviewPanel" class="panel-body" style="border: 1px solid var(--line); border-radius: 8px; background: #0c1118; margin-top: 10px; padding: 12px;">
+              <h3 style="margin: 0 0 8px 0; font-size: 0.9rem; font-weight: 700; color: var(--yellow);">Sizing Preview</h3>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.8rem; color: var(--muted);">
+                <div>Mark Price: <strong id="previewMarkPrice" style="color: var(--text);">-</strong></div>
+                <div>Raw Qty: <strong id="previewRawQty" style="color: var(--text);">-</strong></div>
+                <div>Rounded Qty: <strong id="previewRoundedQty" style="color: var(--text);">-</strong></div>
+                <div>Min Qty: <strong id="previewMinQty" style="color: var(--text);">-</strong></div>
+                <div>Max Qty: <strong id="previewMaxQty" style="color: var(--text);">-</strong></div>
+                <div>Min Notional: <strong id="previewMinNotional" style="color: var(--text);">-</strong></div>
+                <div>Est. Notional: <strong id="previewEstimatedNotional" style="color: var(--text);">-</strong></div>
+              </div>
+              <div style="margin-top: 8px; font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 6px;">
+                Reason: <span id="previewReason" style="font-weight: bold; color: var(--text);">-</span>
+              </div>
             </div>
 
             <div class="btn-row">
@@ -1684,6 +1713,18 @@
       });
     }
 
+    // Load and listen for Manual Test Symbol
+    const manualTestSymbolInput = document.getElementById("manualTestSymbol");
+    if (manualTestSymbolInput) {
+      manualTestSymbolInput.value = localStorage.getItem("bybitManualTestSymbol") || "BTCUSDT";
+      manualTestSymbolInput.addEventListener("input", (e) => {
+        localStorage.setItem("bybitManualTestSymbol", e.target.value.trim().toUpperCase());
+        if (typeof refreshSizingPreview === "function") {
+          refreshSizingPreview();
+        }
+      });
+    }
+
     const appStartedAt = Date.now();
     const scannerRefreshMs = 30000;
     let lastMarketRefreshAt = null;
@@ -1720,6 +1761,43 @@
 
     function shortDuration(ms) {
       return duration(ms).replace(/^00:/, "");
+    }
+
+    async function refreshSizingPreview() {
+      const symbolInput = document.getElementById("manualTestSymbol");
+      if (!symbolInput) return;
+      const symbol = symbolInput.value.trim().toUpperCase();
+      if (!symbol) return;
+      try {
+        const data = await api(`/api/bot/sizing?symbol=${encodeURIComponent(symbol)}`);
+        const sizing = data.sizing || {};
+        const markPriceEl = document.getElementById("previewMarkPrice");
+        const rawQtyEl = document.getElementById("previewRawQty");
+        const roundedQtyEl = document.getElementById("previewRoundedQty");
+        const minQtyEl = document.getElementById("previewMinQty");
+        const maxQtyEl = document.getElementById("previewMaxQty");
+        const minNotionalEl = document.getElementById("previewMinNotional");
+        const estNotionalEl = document.getElementById("previewEstimatedNotional");
+        const reasonEl = document.getElementById("previewReason");
+
+        if (markPriceEl) markPriceEl.textContent = sizing.markPrice !== undefined ? numberText(sizing.markPrice, 4) : "-";
+        if (rawQtyEl) rawQtyEl.textContent = sizing.rawQty || "-";
+        if (roundedQtyEl) roundedQtyEl.textContent = sizing.roundedQty || "-";
+        if (minQtyEl) minQtyEl.textContent = sizing.minQty || "-";
+        if (maxQtyEl) maxQtyEl.textContent = sizing.maxQty || "-";
+        if (minNotionalEl) minNotionalEl.textContent = sizing.minNotionalValue || "-";
+        if (estNotionalEl) estNotionalEl.textContent = sizing.estimatedNotional !== undefined ? money(sizing.estimatedNotional, 2) : "-";
+        if (reasonEl) {
+          reasonEl.textContent = sizing.reason || "-";
+          if (sizing.ok) {
+            reasonEl.style.color = "var(--green)";
+          } else {
+            reasonEl.style.color = "var(--red)";
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch sizing preview", err);
+      }
     }
 
     function activeSymbol() {
@@ -2134,7 +2212,7 @@
     async function refreshLiveData() {
       refreshClock();
       await Promise.all([refreshWallet(), refreshScanner()]);
-      await Promise.all([refreshTickerAndChart(), refreshPositions()]);
+      await Promise.all([refreshTickerAndChart(), refreshPositions(), refreshSizingPreview()]);
     }
 
     function intervalForUi(value) {
@@ -2229,8 +2307,53 @@
       const nextMs = lastRun ? Math.max(0, scanMs - (Date.now() - lastRun)) : scanMs;
       nextScan.textContent = bot.enabled ? shortDuration(nextMs) : "Stopped";
       const dailyRisk = bot.dailyRisk || {};
-      dailyLossCap.textContent = `$${numberText(dailyRisk.lossUsed || 0, 2)} / $${numberText(dailyRisk.dailyLossCapUsdt || bot.dailyLossCapUsdt || 0, 2)}`;
+      const lossUsed = Number(dailyRisk.lossUsed || 0);
+      const cap = Number(dailyRisk.dailyLossCapUsdt || bot.dailyLossCapUsdt || 0);
+      const capReached = cap > 0 && lossUsed >= cap;
+
+      dailyLossCap.textContent = `$${numberText(lossUsed, 2)} / $${numberText(cap, 2)}`;
       maxOpenTrades.textContent = `${dailyRisk.tradesToday || 0} / ${dailyRisk.maxTradesPerDay || bot.maxTradesPerDay || 0}`;
+
+      const autoStartBtn = document.getElementById("autoStartBtn");
+      const startBtn = document.getElementById("startBtn");
+      const controlNotice = document.getElementById("controlNotice");
+      const riskUsedTag = document.getElementById("riskUsedTag");
+
+      if (capReached) {
+        if (autoStartBtn) autoStartBtn.disabled = true;
+        if (startBtn) startBtn.disabled = true;
+        if (controlNotice) {
+          controlNotice.textContent = "Daily loss cap reached. Trading locked for today.";
+          controlNotice.classList.add("locked");
+        }
+        if (riskUsedTag) {
+          riskUsedTag.textContent = "LOCKED";
+          riskUsedTag.style.backgroundColor = "rgba(255, 91, 110, 0.15)";
+          riskUsedTag.style.color = "var(--red)";
+          riskUsedTag.style.borderColor = "rgba(255, 91, 110, 0.35)";
+        }
+        if (dailyLossCap) {
+          dailyLossCap.style.color = "var(--red)";
+        }
+      } else {
+        if (autoStartBtn) autoStartBtn.disabled = false;
+        if (startBtn) startBtn.disabled = false;
+        if (controlNotice) {
+          controlNotice.classList.remove("locked");
+          if (controlNotice.textContent === "Daily loss cap reached. Trading locked for today.") {
+            controlNotice.textContent = "Bybit demo execution needs the local backend running on http://127.0.0.1:8787.";
+          }
+        }
+        if (riskUsedTag) {
+          riskUsedTag.textContent = "Live";
+          riskUsedTag.style.backgroundColor = "";
+          riskUsedTag.style.color = "";
+          riskUsedTag.style.borderColor = "";
+        }
+        if (dailyLossCap) {
+          dailyLossCap.style.color = "";
+        }
+      }
       document.getElementById("dailyLossCapInput").value = bot.dailyLossCapUsdt || dailyRisk.dailyLossCapUsdt || 25;
       document.getElementById("maxTradesPerDay").value = bot.maxTradesPerDay || dailyRisk.maxTradesPerDay || 5;
       document.getElementById("breakevenTrigger").value = bot.breakevenTriggerPct || 0.6;
@@ -2427,7 +2550,8 @@
     });
 
     document.getElementById("startBtn").addEventListener("click", async () => {
-      const symbol = activeSymbol();
+      const manualSymbolInput = document.getElementById("manualTestSymbol");
+      const symbol = manualSymbolInput ? manualSymbolInput.value.trim().toUpperCase() : activeSymbol();
       const stopLossPct = Number(document.getElementById("stop").value || 0.8);
       const takeProfitPct = Number(document.getElementById("take").value || 1.6);
       notice.textContent = `Submitting tiny Bybit demo market buy for ${symbol} with SL/TP...`;

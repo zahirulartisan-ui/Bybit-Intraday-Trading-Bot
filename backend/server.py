@@ -1087,6 +1087,19 @@ def get_daily_closed_pnl():
     return pnl, "OK"
 
 
+def daily_loss_cap_reached(state):
+    cap = max(0.0, float(state.get("dailyLossCapUsdt") or 0))
+    if cap <= 0:
+        return False, "Daily risk OK"
+    closed_pnl, pnl_msg = get_daily_closed_pnl()
+    if closed_pnl is None:
+        return False, f"Could not check closed PnL: {pnl_msg}"
+    loss_used = abs(min(0.0, closed_pnl))
+    if loss_used >= cap:
+        return True, "Daily loss cap reached. Trading locked for today."
+    return False, "Daily risk OK"
+
+
 def daily_risk_report(state):
     cap = max(0.0, float(state.get("dailyLossCapUsdt") or 0))
     max_trades = max(1, int(state.get("maxTradesPerDay") or 1))
@@ -1821,10 +1834,16 @@ def bot_tick():
     sizing = calculate_position_sizing(symbol, active_state) if signal in ("Buy", "Sell") else {}
     if sizing.get("ok"):
         active_state["qty"] = sizing["qty"]
+
+    reached, lock_reason = daily_loss_cap_reached(state)
+    if reached:
+        daily_risk["blocked"] = True
+        daily_risk["reason"] = lock_reason
+
     update = {
         "lastRunAt": int(now),
         "lastSignal": signal,
-        "lastReason": reason,
+        "lastReason": lock_reason if reached else reason,
         "engineVotes": votes,
         "router": router,
         "indicators": indicators,
@@ -1838,8 +1857,15 @@ def bot_tick():
         "positionSizing": sizing,
         "tradeManagement": management,
         "dailyRisk": daily_risk,
-        "executionGuard": {"ok": True, "reason": "No execution signal"},
-        "orderLifecycle": order_lifecycle(signal=signal, reason=reason),
+        "executionGuard": {"ok": not reached, "reason": lock_reason if reached else "No execution signal"},
+        "orderLifecycle": order_lifecycle(
+            signal=signal,
+            guard="blocked" if reached else "idle",
+            order="skipped" if reached else "idle",
+            protection="skipped" if reached else "idle",
+            status="blocked" if reached else "idle",
+            reason=lock_reason if reached else reason
+        ),
     }
 
     if signal in ("Buy", "Sell"):
@@ -2106,6 +2132,16 @@ class Handler(BaseHTTPRequestHandler):
             with BOT_LOCK:
                 state = dict(BOT_STATE)
 
+            # Check daily loss cap
+            reached, lock_reason = daily_loss_cap_reached(state)
+            if reached:
+                json_response(self, 200, {
+                    "retCode": -1,
+                    "retMsg": "Daily loss cap reached. Trading locked for today.",
+                    "ok": False
+                })
+                return
+
             chosen_symbol = None
             sizing = None
 
@@ -2143,7 +2179,20 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/bot/start":
+            with BOT_LOCK:
+                state = dict(BOT_STATE)
+            check_state = {**state, "dailyLossCapUsdt": payload.get("dailyLossCapUsdt", state.get("dailyLossCapUsdt", 25.0))}
+            reached, lock_reason = daily_loss_cap_reached(check_state)
+            if reached:
+                json_response(self, 200, {
+                    "ok": False,
+                    "enabled": False,
+                    "reason": "Daily loss cap reached. Trading locked for today."
+                })
+                return
+
             universe = top_gainer_universe(force=True)
+            daily_loss_cap = max(0.0, float(payload.get("dailyLossCapUsdt", 25.0)))
             symbol = str(payload.get("symbol") or universe["symbols"][0] or "BTCUSDT").upper()
             interval = str(payload.get("interval", "5"))
             qty = str(payload.get("qty", "0.001"))
@@ -2152,7 +2201,6 @@ class Handler(BaseHTTPRequestHandler):
             max_allocation = max(1, float(payload.get("maxAllocationUsdt", 250)))
             risk_per_trade = max(0.01, float(payload.get("riskPerTradePct", 0.5)))
             max_open_positions = max(1, int(payload.get("maxOpenPositions", 1)))
-            daily_loss_cap = max(0, float(payload.get("dailyLossCapUsdt", 25)))
             max_trades_per_day = max(1, int(payload.get("maxTradesPerDay", 5)))
             breakeven_enabled = payload.get("breakevenEnabled", True) is not False
             breakeven_trigger = max(0.1, float(payload.get("breakevenTriggerPct", 0.6)))
