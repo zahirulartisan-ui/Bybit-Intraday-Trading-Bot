@@ -43,13 +43,12 @@ def sr_breakout_engine(tf1h, tf15m, tf5m):
 def rsi_divergence_engine(tf1h, tf15m, tf5m):
     direction = trend_direction(tf1h)
     closes15 = [item["close"] for item in tf15m]
-    rsi_values = [rsi(closes15[:i], 14) for i in range(20, len(closes15) + 1)]
-    if len(rsi_values) < 10:
+    if len(closes15) < 29:
         return vote("RSI Divergence", "WAIT", "Not enough RSI history")
     price_now = closes15[-1]
     price_prev = closes15[-8]
-    rsi_now = rsi_values[-1]
-    rsi_prev = rsi_values[-8]
+    rsi_now = rsi(closes15, 14)
+    rsi_prev = rsi(closes15[:-8], 14)
     entry = candle_direction(tf5m[-1])
     bearish = price_now > price_prev and rsi_now < rsi_prev and entry == "Sell"
     bullish = price_now < price_prev and rsi_now > rsi_prev and entry == "Buy"

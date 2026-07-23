@@ -17,8 +17,11 @@ def rsi(values, period=14):
         change = values[i] - values[i - 1]
         gains.append(max(change, 0))
         losses.append(abs(min(change, 0)))
-    avg_gain = sum(gains[-period:]) / period
-    avg_loss = sum(losses[-period:]) / period
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
     if avg_loss == 0:
         return 100
     rs = avg_gain / avg_loss
