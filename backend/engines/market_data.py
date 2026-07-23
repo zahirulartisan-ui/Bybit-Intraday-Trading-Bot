@@ -51,5 +51,5 @@ class MarketDataEngine:
         return {
             "ok": bool(tf1h and tf15m and tf5m),
             "timeframes": {"1H": tf1h, "15M": tf15m, "5M": tf5m},
-            "message": "; ".join([m1, m15, m5]),
+            "message": "; ".join(x for x in [m1, m15, m5] if x),
         }
