@@ -1,6 +1,6 @@
 import secrets
 import time
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_DOWN
 
 
 class TradeManagementEngine:
@@ -50,18 +50,65 @@ class TradeManagementEngine:
         return f"cdx-{prefix}-{int(time.time() * 1000)}-{nonce}"[:36]
 
     def place_order(self, symbol, side, qty, source, stop_loss_pct=None, take_profit_pct=None):
+        mark = self.mark_price(symbol)
+        if not mark:
+            return {"retCode": -1001, "retMsg": "Order blocked locally: quantity/notional does not meet Bybit instrument limits."}
+
+        payload = self.market_data.public_get("/v5/market/instruments-info", {"category": "linear", "symbol": symbol})
+        row = ((payload.get("result") or {}).get("list") or [{}])[0]
+        if not row:
+            return {"retCode": -1001, "retMsg": "Order blocked locally: quantity/notional does not meet Bybit instrument limits."}
+
+        lot = row.get("lotSizeFilter") or {}
+        qty_step = Decimal(str(lot.get("qtyStep") or "0.001"))
+        min_order_qty = Decimal(str(lot.get("minOrderQty") or "0.001"))
+        max_order_qty = Decimal(str(lot.get("maxOrderQty") or lot.get("maxMktOrderQty") or "0"))
+        min_notional_value = Decimal(str(lot.get("minNotionalValue") or "5"))
+
+        try:
+            qty_dec = Decimal(str(qty))
+        except Exception:
+            qty_dec = Decimal("0")
+
+        # Round quantity down to the valid qtyStep
+        if qty_step > 0:
+            rounded_qty = (qty_dec / qty_step).to_integral_value(rounding=ROUND_DOWN) * qty_step
+        else:
+            rounded_qty = qty_dec
+
+        notional = rounded_qty * Decimal(str(mark))
+
+        # Reject locally before sending to Bybit if:
+        # - qty < minOrderQty
+        # - qty > maxOrderQty
+        # - qty * markPrice < minNotionalValue
+        rejected = False
+        if rounded_qty < min_order_qty:
+            rejected = True
+        elif max_order_qty > 0 and rounded_qty > max_order_qty:
+            rejected = True
+        elif min_notional_value > 0 and notional < min_notional_value:
+            rejected = True
+
+        if rejected:
+            return {
+                "retCode": -1001,
+                "retMsg": "Order blocked locally: quantity/notional does not meet Bybit instrument limits.",
+                "result": {}
+            }
+
+        qty_str = format(rounded_qty.normalize(), "f")
+
         order = {
             "category": "linear",
             "symbol": symbol,
             "side": side,
             "orderType": "Market",
-            "qty": qty,
+            "qty": qty_str,
             "timeInForce": "IOC",
             "orderLinkId": self.order_link_id(source),
         }
         if stop_loss_pct is not None and take_profit_pct is not None:
-            if self.mark_price(symbol) is None:
-                return {"retCode": -1, "retMsg": "Could not fetch mark price for TP/SL"}
             stop_loss, take_profit = self.tpsl_prices(symbol, side, stop_loss_pct, take_profit_pct)
             if stop_loss and take_profit:
                 order.update({

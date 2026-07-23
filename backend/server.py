@@ -558,29 +558,42 @@ def calculate_position_sizing(symbol, state):
     max_qty = rules.get("maxOrderQty") or Decimal("0")
     if max_qty > 0:
         qty = min(qty, max_qty)
-    if qty < min_qty:
-        if min_qty * Decimal(str(mark)) <= Decimal(str(max_allocation)):
-            qty = min_qty
-        else:
-            return {
-                "ok": False,
-                "reason": "Calculated qty below exchange minimum and max allocation is too small",
-                "qty": "0",
-                "equity": equity,
-                "markPrice": mark,
-                "minQty": format_qty(min_qty),
-                "maxAllocationUsdt": max_allocation,
-                "minNotionalValue": format_qty(rules["minNotionalValue"]),
-            }
 
     notional = qty * Decimal(str(mark))
-    if rules["minNotionalValue"] > 0 and notional < rules["minNotionalValue"]:
+
+    # Reject locally if:
+    # - qty < minOrderQty
+    # - qty > maxOrderQty
+    # - qty * markPrice < minNotionalValue
+    rejected = False
+    if qty < rules["minOrderQty"]:
+        rejected = True
+    elif max_qty > 0 and qty > max_qty:
+        rejected = True
+    elif rules["minNotionalValue"] > 0 and notional < rules["minNotionalValue"]:
+        rejected = True
+
+    if rejected:
         return {
             "ok": False,
-            "reason": "Final qty does not meet min notional",
+            "reason": "Order blocked locally: quantity/notional does not meet Bybit instrument limits.",
             "qty": "0",
-            "notional": format_qty(notional),
+            "markPrice": mark,
+            "mark_price": mark,
+            "rawQty": format_qty(raw_qty),
+            "raw_qty": format_qty(raw_qty),
+            "roundedQty": "0",
+            "rounded_qty": "0",
+            "minQty": format_qty(rules["minOrderQty"]),
+            "min_qty": format_qty(rules["minOrderQty"]),
+            "maxQty": format_qty(rules["maxOrderQty"]) if rules["maxOrderQty"] > 0 else "unlimited",
+            "max_qty": format_qty(rules["maxOrderQty"]) if rules["maxOrderQty"] > 0 else "unlimited",
             "minNotionalValue": format_qty(rules["minNotionalValue"]),
+            "min_notional": format_qty(rules["minNotionalValue"]),
+            "estimatedNotional": "0",
+            "estimated_notional": "0",
+            "qtyStep": format_qty(rules["qtyStep"]),
+            "qty_step": format_qty(rules["qtyStep"]),
         }
 
     return {
@@ -590,13 +603,24 @@ def calculate_position_sizing(symbol, state):
         "notional": format_qty(notional),
         "equity": round(equity, 4),
         "markPrice": mark,
+        "mark_price": mark,
+        "rawQty": format_qty(raw_qty),
+        "raw_qty": format_qty(raw_qty),
+        "roundedQty": format_qty(qty),
+        "rounded_qty": format_qty(qty),
+        "minQty": format_qty(rules["minOrderQty"]),
+        "min_qty": format_qty(rules["minOrderQty"]),
+        "maxQty": format_qty(rules["maxOrderQty"]) if rules["maxOrderQty"] > 0 else "unlimited",
+        "max_qty": format_qty(rules["maxOrderQty"]) if rules["maxOrderQty"] > 0 else "unlimited",
+        "minNotionalValue": format_qty(rules["minNotionalValue"]),
+        "min_notional": format_qty(rules["minNotionalValue"]),
+        "estimatedNotional": format_qty(notional),
+        "estimated_notional": format_qty(notional),
         "riskAmount": round(risk_amount, 4),
         "riskPerTradePct": risk_pct,
         "maxAllocationUsdt": max_allocation,
-        "minQty": format_qty(min_qty),
-        "maxQty": format_qty(max_qty) if max_qty > 0 else "unlimited",
-        "minNotionalValue": format_qty(rules["minNotionalValue"]),
         "qtyStep": format_qty(rules["qtyStep"]),
+        "qty_step": format_qty(rules["qtyStep"]),
     }
 
 
@@ -1618,19 +1642,56 @@ def generate_order_link_id(source):
 
 
 def place_demo_order(symbol, side, qty, source, stop_loss_pct=None, take_profit_pct=None):
+    mark = get_mark_price(symbol)
+    if not mark:
+        return {"retCode": -1001, "retMsg": "Order blocked locally: quantity/notional does not meet Bybit instrument limits."}
+
+    rules = get_instrument_rules(symbol)
+    if not rules.get("ok"):
+        return {"retCode": -1001, "retMsg": "Order blocked locally: quantity/notional does not meet Bybit instrument limits."}
+
+    try:
+        qty_dec = Decimal(str(qty))
+    except Exception:
+        qty_dec = Decimal("0")
+
+    # Round quantity down to the valid qtyStep
+    rounded_qty = floor_to_step(qty_dec, rules["qtyStep"])
+    notional = rounded_qty * Decimal(str(mark))
+
+    # Reject locally before sending to Bybit if:
+    # - qty < minOrderQty
+    # - qty > maxOrderQty
+    # - qty * markPrice < minNotionalValue
+    max_qty = rules.get("maxOrderQty") or Decimal("0")
+    rejected = False
+    if rounded_qty < rules["minOrderQty"]:
+        rejected = True
+    elif max_qty > 0 and rounded_qty > max_qty:
+        rejected = True
+    elif rules["minNotionalValue"] > 0 and notional < rules["minNotionalValue"]:
+        rejected = True
+
+    if rejected:
+        return {
+            "retCode": -1001,
+            "retMsg": "Order blocked locally: quantity/notional does not meet Bybit instrument limits.",
+            "result": {}
+        }
+
+    qty_str = format_qty(rounded_qty)
+
     order = {
         "category": "linear",
         "symbol": symbol,
         "side": side,
         "orderType": "Market",
-        "qty": qty,
+        "qty": qty_str,
         "timeInForce": "IOC",
         "orderLinkId": generate_order_link_id(source),
     }
 
     if stop_loss_pct is not None and take_profit_pct is not None:
-        if get_mark_price(symbol) is None:
-            return {"retCode": -1, "retMsg": "Could not fetch mark price for TP/SL"}
         stop_loss, take_profit = tpsl_prices(symbol, side, stop_loss_pct, take_profit_pct)
         if stop_loss and take_profit:
             order.update({
@@ -2039,11 +2100,44 @@ class Handler(BaseHTTPRequestHandler):
 
             symbol = str(payload.get("symbol", "BTCUSDT")).upper()
             side = "Sell" if payload.get("side") == "Sell" else "Buy"
-            qty = str(payload.get("qty", "0.001"))
             stop_loss_pct = float(payload.get("stopLossPct", 0.8))
             take_profit_pct = float(payload.get("takeProfitPct", 1.6))
-            result = place_demo_order(symbol, side, qty, "manual", stop_loss_pct, take_profit_pct)
-            get_bot_engine().journal.add("manual_order", {"symbol": symbol, "side": side, "result": result})
+
+            with BOT_LOCK:
+                state = dict(BOT_STATE)
+
+            chosen_symbol = None
+            sizing = None
+
+            # 1. Try selected symbol
+            p_sizing = calculate_position_sizing(symbol, state)
+            if p_sizing.get("ok"):
+                chosen_symbol = symbol
+                sizing = p_sizing
+            else:
+                # 2. Try BTCUSDT, ETHUSDT, SOLUSDT in order
+                for fb in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]:
+                    if fb != symbol:
+                        fb_sizing = calculate_position_sizing(fb, state)
+                        if fb_sizing.get("ok"):
+                            chosen_symbol = fb
+                            sizing = fb_sizing
+                            break
+
+            if not chosen_symbol or not sizing:
+                result = {
+                    "retCode": -1001,
+                    "retMsg": "Order blocked locally: quantity/notional does not meet Bybit instrument limits.",
+                    "result": {}
+                }
+                get_bot_engine().journal.add("manual_order", {"symbol": symbol, "side": side, "result": result})
+                get_bot_engine().set_status("journal", "ok")
+                json_response(self, 200, result)
+                return
+
+            qty = sizing["qty"]
+            result = place_demo_order(chosen_symbol, side, qty, "manual", stop_loss_pct, take_profit_pct)
+            get_bot_engine().journal.add("manual_order", {"symbol": chosen_symbol, "side": side, "result": result})
             get_bot_engine().set_status("journal", "ok")
             json_response(self, 200, result)
             return
