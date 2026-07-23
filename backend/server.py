@@ -144,7 +144,7 @@ class BotEngineV2:
         return {
             "ok": ok,
             "timeframes": {"1H": tf1h, "15M": tf15m, "5M": tf5m},
-            "message": "; ".join([message1h, message15m, message5m]),
+            "message": "; ".join(x for x in [message1h, message15m, message5m] if x),
         }
 
     def indicators(self, snapshot):
@@ -834,8 +834,22 @@ def vwap_bounce_engine(tf1h, tf15m, tf5m):
     return vote("VWAP Bounce", "WAIT", f"1H {direction}; waiting for VWAP bounce confirmation")
 
 
+from datetime import datetime, timezone
+
 def orb_engine(tf1h, tf15m, tf5m):
-    opening = tf1h[-2] if len(tf1h) >= 2 else tf1h[-1]
+    now = datetime.now(timezone.utc)
+    today_utc_midnight = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    today_utc_midnight_ms = int(today_utc_midnight.timestamp() * 1000)
+
+    opening = None
+    for candle in tf1h:
+        if candle["time"] >= today_utc_midnight_ms:
+            opening = candle
+            break
+
+    if not opening:
+        return vote("ORB", "WAIT", "No 1H candle found for current UTC day")
+
     high = opening["high"]
     low = opening["low"]
     last15 = tf15m[-1]
