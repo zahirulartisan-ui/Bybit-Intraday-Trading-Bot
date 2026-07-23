@@ -1044,13 +1044,13 @@
               </div>
               <div class="field">
                 <label for="riskPerTrade">Risk / trade %</label>
-                <input id="riskPerTrade" type="number" value="0.5" min="0.05" max="5" step="0.05">
+                <input id="riskPerTrade" type="number" value="0.25" min="0.05" max="5" step="0.05">
               </div>
             </div>
 
             <div class="field">
               <label for="maxOpenPositions">Max open positions</label>
-                <input id="maxOpenPositions" type="number" value="2" min="1" max="5" step="1">
+                <input id="maxOpenPositions" type="number" value="1" min="1" max="5" step="1">
             </div>
 
             <div class="split">
@@ -1060,7 +1060,7 @@
               </div>
               <div class="field">
                 <label for="maxTradesPerDay">Max trades/day</label>
-                <input id="maxTradesPerDay" type="number" value="12" min="1" max="50" step="1">
+                <input id="maxTradesPerDay" type="number" value="6" min="1" max="50" step="1">
               </div>
             </div>
 
@@ -1072,22 +1072,22 @@
             <div class="split">
               <div class="field">
                 <label for="partialTpTrigger">Partial TP trigger %</label>
-                <input id="partialTpTrigger" type="number" value="1.0" min="0.1" max="10" step="0.1">
+              <input id="partialTpTrigger" type="number" value="1.4" min="0.1" max="10" step="0.1">
               </div>
               <div class="field">
                 <label for="partialTpClose">Partial close %</label>
-                <input id="partialTpClose" type="number" value="50" min="1" max="100" step="1">
+                <input id="partialTpClose" type="number" value="40" min="1" max="100" step="1">
               </div>
             </div>
 
             <div class="split">
               <div class="field">
                 <label for="trailingTrigger">Trailing trigger %</label>
-                <input id="trailingTrigger" type="number" value="0.8" min="0.1" max="10" step="0.1">
+                <input id="trailingTrigger" type="number" value="1.8" min="0.1" max="10" step="0.1">
               </div>
               <div class="field">
                 <label for="trailingDistance">Trailing distance %</label>
-                <input id="trailingDistance" type="number" value="0.35" min="0.05" max="5" step="0.05">
+                <input id="trailingDistance" type="number" value="0.45" min="0.05" max="5" step="0.05">
               </div>
             </div>
 
@@ -1105,8 +1105,8 @@
             <div class="field">
               <label for="routerMode">Router mode</label>
               <select id="routerMode">
-                <option value="balanced" selected>Balanced - 1 strong engine vote</option>
-                <option value="conservative">Conservative - 2 matching votes</option>
+                <option value="balanced">Balanced - 1 strong engine vote</option>
+                <option value="conservative" selected>Conservative - 2 matching votes</option>
                 <option value="aggressive">Aggressive demo - fastest signal</option>
               </select>
             </div>
@@ -2308,15 +2308,15 @@
       const stopLossPct = Number(document.getElementById("stop").value || 0.8);
       const takeProfitPct = Number(document.getElementById("take").value || 1.6);
       const maxAllocationUsdt = Number(document.getElementById("allocation").value || 250);
-      const riskPerTradePct = Number(document.getElementById("riskPerTrade").value || 0.5);
+      const riskPerTradePct = Number(document.getElementById("riskPerTrade").value || 0.25);
       const maxOpenPositions = Number(document.getElementById("maxOpenPositions").value || 1);
       const dailyLossCapUsdt = Number(document.getElementById("dailyLossCapInput").value || 25);
-      const maxTradesPerDay = Number(document.getElementById("maxTradesPerDay").value || 5);
+      const maxTradesPerDay = Number(document.getElementById("maxTradesPerDay").value || 6);
       const breakevenTriggerPct = Number(document.getElementById("breakevenTrigger").value || 0.6);
-      const partialTpTriggerPct = Number(document.getElementById("partialTpTrigger").value || 1.0);
-      const partialTpClosePct = Number(document.getElementById("partialTpClose").value || 50);
-      const trailingStopTriggerPct = Number(document.getElementById("trailingTrigger").value || 0.8);
-      const trailingStopDistancePct = Number(document.getElementById("trailingDistance").value || 0.35);
+      const partialTpTriggerPct = Number(document.getElementById("partialTpTrigger").value || 1.4);
+      const partialTpClosePct = Number(document.getElementById("partialTpClose").value || 40);
+      const trailingStopTriggerPct = Number(document.getElementById("trailingTrigger").value || 1.8);
+      const trailingStopDistancePct = Number(document.getElementById("trailingDistance").value || 0.45);
       const mode = document.getElementById("routerMode").value;
       notice.textContent = "Starting auto trader with top-gainer best-signal scan...";
       try {
@@ -2337,10 +2337,10 @@
             partialTpEnabled: true,
             partialTpTriggerPct,
             partialTpClosePct,
-            trailingStopEnabled: true,
+            trailingStopEnabled: false,
             trailingStopTriggerPct,
             trailingStopDistancePct,
-            cooldownSeconds: 120,
+            cooldownSeconds: 180,
             mode
           })
         });
