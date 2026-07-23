@@ -60,6 +60,8 @@ class TradeManagementEngine:
             "orderLinkId": self.order_link_id(source),
         }
         if stop_loss_pct is not None and take_profit_pct is not None:
+            if self.mark_price(symbol) is None:
+                return {"retCode": -1, "retMsg": "Could not fetch mark price for TP/SL"}
             stop_loss, take_profit = self.tpsl_prices(symbol, side, stop_loss_pct, take_profit_pct)
             if stop_loss and take_profit:
                 order.update({

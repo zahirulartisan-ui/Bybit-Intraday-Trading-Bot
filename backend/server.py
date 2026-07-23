@@ -625,8 +625,11 @@ def rsi(values, period=14):
         change = values[i] - values[i - 1]
         gains.append(max(change, 0))
         losses.append(abs(min(change, 0)))
-    avg_gain = sum(gains[-period:]) / period
-    avg_loss = sum(losses[-period:]) / period
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
     if avg_loss == 0:
         return 100
     rs = avg_gain / avg_loss
@@ -766,18 +769,15 @@ def sr_breakout_engine(tf1h, tf15m, tf5m):
 def rsi_divergence_engine(tf1h, tf15m, tf5m):
     direction = trend_direction(tf1h)
     closes15 = [item["close"] for item in tf15m]
-    rsi_values = []
-    for i in range(20, len(closes15) + 1):
-        rsi_values.append(rsi(closes15[:i], 14))
-    if len(rsi_values) < 10:
+    if len(closes15) < 29:
         return vote("RSI Divergence", "WAIT", "Not enough RSI history")
 
     recent15 = tf15m[-3:]
     prior15 = tf15m[-10:-7]
     price_now = sum(item["close"] for item in recent15) / len(recent15)
     price_prev = sum(item["close"] for item in prior15) / len(prior15)
-    rsi_now = rsi_values[-1]
-    rsi_prev = rsi_values[-8]
+    rsi_now = rsi(closes15, 14)
+    rsi_prev = rsi(closes15[:-8], 14)
     entry = candle_direction(tf5m[-1])
     rsi_delta = abs(rsi_now - rsi_prev)
     price_delta_pct = abs(((price_now - price_prev) / price_prev) * 100) if price_prev else 0
@@ -1614,6 +1614,8 @@ def place_demo_order(symbol, side, qty, source, stop_loss_pct=None, take_profit_
     }
 
     if stop_loss_pct is not None and take_profit_pct is not None:
+        if get_mark_price(symbol) is None:
+            return {"retCode": -1, "retMsg": "Could not fetch mark price for TP/SL"}
         stop_loss, take_profit = tpsl_prices(symbol, side, stop_loss_pct, take_profit_pct)
         if stop_loss and take_profit:
             order.update({
