@@ -1006,6 +1006,11 @@
             </div>
 
             <div class="field">
+              <label for="adminToken">Admin Token</label>
+              <input id="adminToken" type="password" placeholder="Enter admin token...">
+            </div>
+
+            <div class="field">
               <label for="strategy">Strategy</label>
               <select id="strategy">
                 <option>V3 router: all 5 strategies</option>
@@ -1669,6 +1674,16 @@
         : window.location.origin;
     const apiBase = (apiParam || storedApiBase || defaultApiBase).replace(/\/+$/, "");
     if (apiParam) localStorage.setItem("bybitBotApiBase", apiBase);
+
+    // Load and listen for Admin Token
+    const adminTokenInput = document.getElementById("adminToken");
+    if (adminTokenInput) {
+      adminTokenInput.value = localStorage.getItem("bybitAdminToken") || "";
+      adminTokenInput.addEventListener("input", (e) => {
+        localStorage.setItem("bybitAdminToken", e.target.value.trim());
+      });
+    }
+
     const appStartedAt = Date.now();
     const scannerRefreshMs = 30000;
     let lastMarketRefreshAt = null;
@@ -1911,10 +1926,25 @@
 
     async function api(path, options = {}) {
       const started = performance.now();
+      const headers = { "Content-Type": "application/json" };
+      const token = localStorage.getItem("bybitAdminToken");
+      if (token && token.trim()) {
+        headers["Authorization"] = `Bearer ${token.trim()}`;
+      }
+      if (options.headers) {
+        Object.assign(headers, options.headers);
+      }
       const response = await fetch(`${apiBase}${path}`, {
-        headers: { "Content-Type": "application/json" },
-        ...options
+        ...options,
+        headers
       });
+      if (response.status === 401) {
+        const isPost = options.method && options.method.toUpperCase() === "POST";
+        if (isPost) {
+          notice.textContent = "Unauthorized: admin token missing or invalid.";
+          throw new Error("Unauthorized: admin token missing or invalid.");
+        }
+      }
       lastApiLatency = Math.round(performance.now() - started);
       apiLatency.textContent = `${lastApiLatency}ms`;
       return response.json();
@@ -2353,7 +2383,11 @@
           notice.textContent = "Auto trader start failed.";
         }
       } catch (error) {
-        notice.textContent = `Backend request failed: ${error.message}`;
+        if (error.message.includes("Unauthorized")) {
+          notice.textContent = "Unauthorized: admin token missing or invalid.";
+        } else {
+          notice.textContent = `Backend request failed: ${error.message}`;
+        }
       }
     });
 
@@ -2367,7 +2401,11 @@
           appendLog("Auto trader stopped.");
         }
       } catch (error) {
-        notice.textContent = `Backend request failed: ${error.message}`;
+        if (error.message.includes("Unauthorized")) {
+          notice.textContent = "Unauthorized: admin token missing or invalid.";
+        } else {
+          notice.textContent = `Backend request failed: ${error.message}`;
+        }
       }
     });
 
@@ -2380,7 +2418,11 @@
         appendLog(`Trade manager checked positions; actions: ${actions}.`);
         await refreshJournal();
       } catch (error) {
-        notice.textContent = `Backend request failed: ${error.message}`;
+        if (error.message.includes("Unauthorized")) {
+          notice.textContent = "Unauthorized: admin token missing or invalid.";
+        } else {
+          notice.textContent = `Backend request failed: ${error.message}`;
+        }
       }
     });
 
@@ -2402,8 +2444,12 @@
           appendLog(`Demo order rejected for ${symbol}: ${result.retMsg || "Unknown error"}.`);
         }
       } catch (error) {
-        notice.textContent = `Backend request failed: ${error.message}`;
-        appendLog(`Backend request failed while placing demo order.`);
+        if (error.message.includes("Unauthorized")) {
+          notice.textContent = "Unauthorized: admin token missing or invalid.";
+        } else {
+          notice.textContent = `Backend request failed: ${error.message}`;
+          appendLog(`Backend request failed while placing demo order.`);
+        }
       }
     });
 
@@ -2424,8 +2470,12 @@
           appendLog(`Kill switch failed for ${symbol}: ${result.retMsg || "Unknown error"}.`);
         }
       } catch (error) {
-        notice.textContent = `Backend request failed: ${error.message}`;
-        appendLog(`Backend request failed while sending kill switch.`);
+        if (error.message.includes("Unauthorized")) {
+          notice.textContent = "Unauthorized: admin token missing or invalid.";
+        } else {
+          notice.textContent = `Backend request failed: ${error.message}`;
+          appendLog(`Backend request failed while sending kill switch.`);
+        }
       }
     });
     document.getElementById("paperMode").addEventListener("click", () => {
