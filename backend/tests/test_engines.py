@@ -94,3 +94,39 @@ def test_orb_engine_valid_candle_today():
     res_legacy = legacy_orb_engine(tf1h, tf15m, tf5m)
     assert res_legacy["signal"] == "Buy"
     assert "1H opening range high broken" in res_legacy["reason"]
+
+
+def test_journal_engine_concurrency(tmp_path):
+    import threading
+    from engines.journal import JournalEngine
+
+    # Use a temporary file for the journal path
+    journal_file = tmp_path / "trade_journal.json"
+    engine = JournalEngine(limit=10, path=journal_file)
+
+    num_threads = 10
+    entries_per_thread = 5
+
+    def worker(worker_id):
+        for i in range(entries_per_thread):
+            engine.add("TEST_EVENT", {"worker_id": worker_id, "index": i})
+
+    threads = []
+    for t_id in range(num_threads):
+        t = threading.Thread(target=worker, args=(t_id,))
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    # The entries should be capped at limit=10
+    assert len(engine.entries) <= 10
+
+    # Let's verify that the entries loaded from file are also correct and match the in-memory state
+    loaded_engine = JournalEngine(limit=10, path=journal_file)
+    assert len(loaded_engine.entries) == len(engine.entries)
+    for entry in loaded_engine.entries:
+        assert entry["event"] == "TEST_EVENT"
+        assert "worker_id" in entry["payload"]
+        assert "index" in entry["payload"]

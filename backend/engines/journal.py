@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -9,6 +10,7 @@ class JournalEngine:
         self.limit = limit
         default_path = Path(__file__).resolve().parents[1] / "data" / "trade_journal.json"
         self.path = Path(path or os.environ.get("BOT_JOURNAL_PATH") or default_path)
+        self._lock = threading.Lock()
         self.entries = self._load()
 
     def add(self, event, payload=None):
@@ -17,9 +19,10 @@ class JournalEngine:
             "event": event,
             "payload": payload or {},
         }
-        self.entries.append(entry)
-        self.entries = self.entries[-self.limit:]
-        self._save()
+        with self._lock:
+            self.entries.append(entry)
+            self.entries = self.entries[-self.limit:]
+            self._save()
         return entry
 
     def recent(self, limit=50):
