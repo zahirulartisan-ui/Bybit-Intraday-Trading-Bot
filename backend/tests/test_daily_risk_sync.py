@@ -116,32 +116,122 @@ def test_get_daily_closed_pnl_filtering():
     start_epoch = server.get_trading_day_start_epoch(date_key)
     start_ms = start_epoch * 1000
 
-    # Mock bybit_request to return closed-pnl list
-    mock_bybit_response = {
-        "retCode": 0,
-        "retMsg": "OK",
-        "result": {
-            "list": [
-                # Yesterday's closed trade
-                {
-                    "updatedTime": str(start_ms - 5000),
-                    "closedPnl": "-10.0"
-                },
-                # Today's closed trade 1 (loss)
-                {
-                    "updatedTime": str(start_ms + 1000),
-                    "closedPnl": "-15.5"
-                },
-                # Today's closed trade 2 (profit)
-                {
-                    "updatedTime": str(start_ms + 2000),
-                    "closedPnl": "5.0"
+    # Mock journal entries in mock engine
+    mock_journal = MagicMock()
+    mock_journal.entries = [
+        # Today's accepted auto trade 1 (BTCUSDT)
+        {
+            "time": start_epoch + 10,
+            "event": "auto_order",
+            "payload": {
+                "symbol": "BTCUSDT",
+                "signal": "Buy",
+                "result": {
+                    "retCode": 0,
+                    "result": {
+                        "orderId": "entry_order_1",
+                        "orderLinkId": "link_entry_1"
+                    }
                 }
-            ]
+            }
+        },
+        # Today's accepted auto trade 2 (ETHUSDT)
+        {
+            "time": start_epoch + 20,
+            "event": "auto_order",
+            "payload": {
+                "symbol": "ETHUSDT",
+                "signal": "Sell",
+                "result": {
+                    "retCode": 0,
+                    "result": {
+                        "orderId": "entry_order_2",
+                        "orderLinkId": "link_entry_2"
+                    }
+                }
+            }
         }
-    }
+    ]
+    mock_engine = MagicMock()
+    mock_engine.journal = mock_journal
 
-    with patch("server.bybit_request", return_value=mock_bybit_response):
+    def mock_bybit_request_fn(method, path, params=None):
+        params = params or {}
+        if path == "/v5/position/closed-pnl":
+            return {
+                "retCode": 0,
+                "retMsg": "OK",
+                "result": {
+                    "list": [
+                        # Yesterday's closed trade
+                        {
+                            "symbol": "BTCUSDT",
+                            "orderId": "close_yesterday",
+                            "updatedTime": str(start_ms - 5000),
+                            "closedPnl": "-10.0"
+                        },
+                        # Today's closed trade 1 (loss)
+                        {
+                            "symbol": "BTCUSDT",
+                            "orderId": "close_order_1",
+                            "updatedTime": str(start_ms + 1000),
+                            "closedPnl": "-15.5"
+                        },
+                        # Today's closed trade 2 (profit)
+                        {
+                            "symbol": "ETHUSDT",
+                            "orderId": "close_order_2",
+                            "updatedTime": str(start_ms + 2000),
+                            "closedPnl": "5.0"
+                        }
+                    ]
+                }
+            }
+        elif path == "/v5/execution/list":
+            return {
+                "retCode": 0,
+                "retMsg": "OK",
+                "result": {
+                    "list": [
+                        # Entry executions
+                        {
+                            "symbol": "BTCUSDT",
+                            "orderId": "entry_order_1",
+                            "orderLinkId": "link_entry_1",
+                            "execType": "Trade",
+                            "execTime": str(start_ms + 10),
+                            "closedSize": "0"
+                        },
+                        {
+                            "symbol": "ETHUSDT",
+                            "orderId": "entry_order_2",
+                            "orderLinkId": "link_entry_2",
+                            "execType": "Trade",
+                            "execTime": str(start_ms + 20),
+                            "closedSize": "0"
+                        },
+                        # Closing executions
+                        {
+                            "symbol": "BTCUSDT",
+                            "orderId": "close_order_1",
+                            "execType": "Trade",
+                            "execTime": str(start_ms + 1000),
+                            "closedSize": "0.001"
+                        },
+                        {
+                            "symbol": "ETHUSDT",
+                            "orderId": "close_order_2",
+                            "execType": "Trade",
+                            "execTime": str(start_ms + 2000),
+                            "closedSize": "0.1"
+                        }
+                    ]
+                }
+            }
+        return {"retCode": -1, "retMsg": "Mock not set", "result": {}}
+
+    with patch("server.get_bot_engine", return_value=mock_engine), \
+         patch("server.bybit_request", side_effect=mock_bybit_request_fn):
         pnl, msg = server.get_daily_closed_pnl(date_key)
 
     assert pnl == -10.5
