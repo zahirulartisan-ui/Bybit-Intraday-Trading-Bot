@@ -2113,7 +2113,7 @@
     async function refreshPositions() {
       const symbol = activeSymbol();
       try {
-        const result = await api(`/api/bybit/positions?symbol=${encodeURIComponent(symbol)}`);
+        const result = await api(`/api/bybit/positions`);
         if (result.retCode !== 0) {
           positionsBody.innerHTML = `<tr><td colspan="7" class="muted">${result.retMsg || "Position request failed"}</td></tr>`;
           positionsPageBody.innerHTML = `<tr><td colspan="7" class="muted">${result.retMsg || "Position request failed"}</td></tr>`;
@@ -2128,7 +2128,7 @@
         openTradesValue.textContent = String(rows.length);
         openTradesMeta.textContent = rows.length ? "Live positions" : "No open position";
         if (!rows.length) {
-          const empty = `<tr><td colspan="7"><div class="empty-state"><strong>No open position for ${symbol}</strong><span>The bot will open positions automatically when signals are confirmed.</span></div></td></tr>`;
+          const empty = `<tr><td colspan="7"><div class="empty-state"><strong>No open positions</strong><span>The bot will open positions automatically when signals are confirmed.</span></div></td></tr>`;
           positionsBody.innerHTML = empty;
           positionsPageBody.innerHTML = empty;
           floatingPnl.textContent = "$0.00";
