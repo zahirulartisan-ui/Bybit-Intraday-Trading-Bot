@@ -2253,8 +2253,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/bybit/positions":
-            symbol = query.get("symbol", "BTCUSDT").upper()
-            payload = bybit_request("GET", "/v5/position/list", {"category": "linear", "symbol": symbol})
+            symbol = query.get("symbol")
+            params = {"category": "linear"}
+            if symbol:
+                params["symbol"] = symbol.upper()
+            else:
+                params["settleCoin"] = "USDT"
+            payload = bybit_request("GET", "/v5/position/list", params)
             json_response(self, 200, payload)
             return
 
@@ -2518,17 +2523,61 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/bybit/kill-switch":
-            symbol = str(payload.get("symbol", "BTCUSDT")).upper()
             with BOT_LOCK:
                 check_and_reset_daily_state(BOT_STATE)
                 BOT_STATE.update({
                     "enabled": False,
                     "lastReason": "Auto trader stopped by kill switch.",
                 })
-            cancel_result = bybit_request("POST", "/v5/order/cancel-all", {"category": "linear", "symbol": symbol})
-            close_result = close_symbol_positions(symbol)
-            get_bot_engine().journal.add("kill_switch", {"symbol": symbol, "cancelResult": cancel_result, "closeResult": close_result})
+
+            positions, msg = get_open_positions()
+            if positions is None:
+                json_response(self, 200, {
+                    "retCode": -1,
+                    "retMsg": f"Failed to fetch positions: {msg}",
+                })
+                return
+
+            if not positions:
+                print("No open positions to close", flush=True)
+                json_response(self, 200, {
+                    "retCode": -1,
+                    "retMsg": "No open positions to close.",
+                })
+                return
+
+            cancel_results = []
+            close_results = []
+            orders_count = 0
+
+            for position in positions:
+                p_symbol = position.get("symbol")
+                if not p_symbol:
+                    continue
+
+                print(f"Kill switch closing {p_symbol}", flush=True)
+
+                cancel_res = bybit_request("POST", "/v5/order/cancel-all", {"category": "linear", "symbol": p_symbol})
+                cancel_results.append(cancel_res)
+
+                close_res = close_symbol_positions(p_symbol)
+                close_results.append(close_res)
+                if close_res.get("ok"):
+                    orders_count += len(close_res.get("orders") or [])
+
+                print(f"Closed {p_symbol} position", flush=True)
+
+                get_bot_engine().journal.add("kill_switch", {
+                    "symbol": p_symbol,
+                    "cancelResult": cancel_res,
+                    "closeResult": close_res,
+                })
+
             get_bot_engine().set_status("journal", "ok")
+
+            cancel_result = cancel_results[-1] if cancel_results else {"retCode": 0}
+            close_result = {"ok": True, "orders": [1] * orders_count}
+
             json_response(self, 200, {
                 "retCode": 0 if cancel_result.get("retCode") == 0 and close_result.get("ok") else cancel_result.get("retCode", -1),
                 "retMsg": "Kill switch sent: open orders cancelled and positions close attempted",
