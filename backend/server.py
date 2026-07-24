@@ -1134,6 +1134,64 @@ def count_today_accepted_orders(engine, date_key):
 def get_daily_closed_pnl(date_key):
     start_epoch = get_trading_day_start_epoch(date_key)
     start_ms = start_epoch * 1000
+
+    # 1. Fetch today's accepted orders from the journal
+    engine = get_bot_engine()
+    accepted_orders = []
+    entries = []
+    if hasattr(engine, "journal") and engine.journal is not None:
+        if hasattr(engine.journal, "entries"):
+            entries = engine.journal.entries
+        elif isinstance(engine.journal, list):
+            entries = engine.journal
+
+    for entry in entries:
+        t = int(entry.get("time") or 0)
+        if t < start_epoch:
+            continue
+        if entry.get("event") not in ("auto_order", "manual_order", "partial_take_profit", "kill_switch"):
+            continue
+        payload = entry.get("payload") or {}
+
+        def extract_order_info(res, symbol, side, event):
+            if not res or not isinstance(res, dict):
+                return
+            if int(res.get("retCode", -1)) == 0:
+                res_data = res.get("result") or {}
+                order_id = res_data.get("orderId")
+                order_link_id = res_data.get("orderLinkId")
+                if order_id or order_link_id:
+                    accepted_orders.append({
+                        "symbol": symbol,
+                        "orderId": order_id,
+                        "orderLinkId": order_link_id,
+                        "time": t,
+                        "event": event,
+                        "side": side
+                    })
+
+        event = entry.get("event")
+        if event in ("auto_order", "manual_order"):
+            symbol = payload.get("symbol")
+            side = payload.get("signal") or payload.get("side")
+            result = payload.get("result") or {}
+            extract_order_info(result, symbol, side, event)
+        elif event == "partial_take_profit":
+            symbol = payload.get("symbol")
+            side = payload.get("side")
+            result = payload.get("result") or {}
+            extract_order_info(result, symbol, side, event)
+        elif event == "kill_switch":
+            close_result = payload.get("closeResult") or {}
+            for res in close_result.get("orders") or []:
+                symbol = payload.get("symbol")
+                extract_order_info(res, symbol, None, event)
+
+    # If there are no accepted orders from today, return 0.0 immediately
+    if not accepted_orders:
+        return 0.0, "OK"
+
+    # 2. Fetch closed PnL from Bybit
     payload = bybit_request("GET", "/v5/position/closed-pnl", {
         "category": "linear",
         "startTime": str(start_ms),
@@ -1141,16 +1199,81 @@ def get_daily_closed_pnl(date_key):
     })
     if payload.get("retCode") != 0:
         return None, payload.get("retMsg", "Closed PnL check failed")
+
+    closed_pnl_list = (payload.get("result") or {}).get("list") or []
+    if not closed_pnl_list:
+        return 0.0, "OK"
+
+    # 3. Fetch execution list from Bybit for today to link executions
+    exec_payload = bybit_request("GET", "/v5/execution/list", {
+        "category": "linear",
+        "startTime": str(start_ms),
+        "limit": "100",
+    })
+
+    executions = []
+    if exec_payload.get("retCode") == 0:
+        executions = (exec_payload.get("result") or {}).get("list") or []
+
+    # Map our today's entry/opening orders by symbol
+    today_entry_symbols = {order["symbol"] for order in accepted_orders if order["event"] in ("auto_order", "manual_order")}
+
+    # Build entry execution times and closing execution times
+    today_entry_order_ids = {order["orderId"] for order in accepted_orders if order["orderId"] and order["event"] in ("auto_order", "manual_order")}
+    today_entry_order_link_ids = {order["orderLinkId"] for order in accepted_orders if order["orderLinkId"] and order["event"] in ("auto_order", "manual_order")}
+
+    entry_exec_times_by_symbol = {}
+    for ex in executions:
+        ex_order_id = ex.get("orderId")
+        ex_order_link_id = ex.get("orderLinkId")
+        ex_symbol = ex.get("symbol")
+        try:
+            ex_time = int(ex.get("execTime") or 0)
+        except (TypeError, ValueError):
+            ex_time = 0
+
+        if ex_order_id in today_entry_order_ids or ex_order_link_id in today_entry_order_link_ids:
+            entry_exec_times_by_symbol.setdefault(ex_symbol, []).append(ex_time)
+
     pnl = 0.0
-    for row in (payload.get("result") or {}).get("list") or []:
+    for row in closed_pnl_list:
         try:
             row_time_str = row.get("updatedTime") or row.get("createdTime") or str(start_ms)
             row_time = int(row_time_str)
             if row_time < start_ms:
                 continue
-            pnl += float(row.get("closedPnl") or 0)
+
+            row_symbol = row.get("symbol")
+            row_order_id = row.get("orderId")
+            row_closed_pnl = float(row.get("closedPnl") or 0)
+
+            # Determine when this position was closed
+            close_time = row_time
+            for ex in executions:
+                if ex.get("orderId") == row_order_id:
+                    try:
+                        close_time = int(ex.get("execTime") or row_time)
+                    except (TypeError, ValueError):
+                        close_time = row_time
+                    break
+
+            # Now, check if this closed PnL was opened today.
+            is_today_trade = False
+            if entry_exec_times_by_symbol.get(row_symbol):
+                for entry_time in entry_exec_times_by_symbol[row_symbol]:
+                    if entry_time <= close_time:
+                        is_today_trade = True
+                        break
+            else:
+                # Fallback: if no entry execution list is available, check if the symbol has an entry order today
+                if row_symbol in today_entry_symbols:
+                    is_today_trade = True
+
+            if is_today_trade:
+                pnl += row_closed_pnl
         except (TypeError, ValueError):
             pass
+
     return pnl, "OK"
 
 
