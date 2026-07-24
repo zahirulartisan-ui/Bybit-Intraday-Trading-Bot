@@ -49,6 +49,30 @@ MARKET_UNIVERSE = {
     "source": "fallback",
 }
 
+def get_configured_timezone():
+    return os.environ.get("TIMEZONE") or os.environ.get("TZ") or "UTC"
+
+def get_current_trading_date_key():
+    import zoneinfo
+    from datetime import datetime
+    tz_str = get_configured_timezone()
+    try:
+        tz = zoneinfo.ZoneInfo(tz_str)
+    except Exception:
+        tz = zoneinfo.ZoneInfo("UTC")
+    return datetime.now(tz).strftime("%Y-%m-%d")
+
+def get_trading_day_start_epoch(date_key):
+    import zoneinfo
+    from datetime import datetime
+    tz_str = get_configured_timezone()
+    try:
+        tz = zoneinfo.ZoneInfo(tz_str)
+    except Exception:
+        tz = zoneinfo.ZoneInfo("UTC")
+    dt = datetime.strptime(date_key, "%Y-%m-%d").replace(tzinfo=tz)
+    return int(dt.timestamp())
+
 BOT_STATE = {
     "enabled": False,
     "symbol": "BTCUSDT",
@@ -100,6 +124,7 @@ BOT_STATE = {
     "scannerRows": [],
     "positionSizing": {},
     "tradeManagement": {},
+    "tradingDateKey": get_current_trading_date_key(),
 }
 BOT_LOCK = threading.Lock()
 BOT_THREAD = None
@@ -1046,17 +1071,54 @@ def get_open_positions_count():
 
 
 def local_day_start_epoch():
-    now = time.localtime()
-    return int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, now.tm_wday, now.tm_yday, now.tm_isdst)))
+    return get_trading_day_start_epoch(get_current_trading_date_key())
 
 
-def count_today_accepted_auto_orders(engine):
-    start = local_day_start_epoch()
+def check_and_reset_daily_state(state):
+    current_date = get_current_trading_date_key()
+    last_date = state.get("tradingDateKey")
+    if last_date != current_date:
+        state["tradingDateKey"] = current_date
+
+        if "dailyRisk" in state:
+            state["dailyRisk"]["tradesToday"] = 0
+            state["dailyRisk"]["lossUsed"] = 0.0
+            state["dailyRisk"]["dailyLossUsed"] = 0.0
+            state["dailyRisk"]["blocked"] = False
+            state["dailyRisk"]["reason"] = "New trading day started."
+
+        if state.get("lastReason") and ("Daily loss cap" in state["lastReason"] or "Max trades/day" in state["lastReason"]):
+            state["lastReason"] = f"New trading day started ({current_date}). Auto trader is active."
+
+        if state.get("executionGuard") and not state["executionGuard"].get("ok") and ("Daily loss cap" in state["executionGuard"].get("reason", "") or "Max trades/day" in state["executionGuard"].get("reason", "")):
+            state["executionGuard"] = {"ok": True, "reason": "New trading day started."}
+
+        if state.get("orderLifecycle"):
+            if state["orderLifecycle"].get("status") == "blocked":
+                state["orderLifecycle"] = order_lifecycle(
+                    signal="WAIT",
+                    guard="idle",
+                    order="idle",
+                    protection="idle",
+                    status="idle",
+                    reason="New trading day started."
+                )
+
+
+def count_today_accepted_orders(engine, date_key):
+    start = get_trading_day_start_epoch(date_key)
     count = 0
-    for entry in getattr(engine.journal, "entries", []):
+    entries = []
+    if hasattr(engine, "journal") and engine.journal is not None:
+        if hasattr(engine.journal, "entries"):
+            entries = engine.journal.entries
+        elif isinstance(engine.journal, list):
+            entries = engine.journal
+
+    for entry in entries:
         if int(entry.get("time") or 0) < start:
             continue
-        if entry.get("event") != "auto_order":
+        if entry.get("event") not in ("auto_order", "manual_order"):
             continue
         payload = entry.get("payload") or {}
         result = payload.get("result") or {}
@@ -1069,8 +1131,9 @@ def count_today_accepted_auto_orders(engine):
     return count
 
 
-def get_daily_closed_pnl():
-    start_ms = local_day_start_epoch() * 1000
+def get_daily_closed_pnl(date_key):
+    start_epoch = get_trading_day_start_epoch(date_key)
+    start_ms = start_epoch * 1000
     payload = bybit_request("GET", "/v5/position/closed-pnl", {
         "category": "linear",
         "startTime": str(start_ms),
@@ -1081,6 +1144,10 @@ def get_daily_closed_pnl():
     pnl = 0.0
     for row in (payload.get("result") or {}).get("list") or []:
         try:
+            row_time_str = row.get("updatedTime") or row.get("createdTime") or str(start_ms)
+            row_time = int(row_time_str)
+            if row_time < start_ms:
+                continue
             pnl += float(row.get("closedPnl") or 0)
         except (TypeError, ValueError):
             pass
@@ -1091,7 +1158,8 @@ def daily_loss_cap_reached(state):
     cap = max(0.0, float(state.get("dailyLossCapUsdt") or 0))
     if cap <= 0:
         return False, "Daily risk OK"
-    closed_pnl, pnl_msg = get_daily_closed_pnl()
+    date_key = get_current_trading_date_key()
+    closed_pnl, pnl_msg = get_daily_closed_pnl(date_key)
     if closed_pnl is None:
         return False, f"Could not check closed PnL: {pnl_msg}"
     loss_used = abs(min(0.0, closed_pnl))
@@ -1103,7 +1171,8 @@ def daily_loss_cap_reached(state):
 def daily_risk_report(state):
     cap = max(0.0, float(state.get("dailyLossCapUsdt") or 0))
     max_trades = max(1, int(state.get("maxTradesPerDay") or 1))
-    closed_pnl, pnl_msg = get_daily_closed_pnl()
+    date_key = get_current_trading_date_key()
+    closed_pnl, pnl_msg = get_daily_closed_pnl(date_key)
     if closed_pnl is None:
         return {
             "ok": False,
@@ -1111,9 +1180,10 @@ def daily_risk_report(state):
             "reason": pnl_msg,
             "dailyLossCapUsdt": cap,
             "maxTradesPerDay": max_trades,
+            "tradingDateKey": date_key,
         }
     engine = get_bot_engine()
-    trades_today = count_today_accepted_auto_orders(engine)
+    trades_today = count_today_accepted_orders(engine, date_key)
     loss_used = abs(min(0.0, closed_pnl))
     blocked = (cap > 0 and loss_used >= cap) or trades_today >= max_trades
     if cap > 0 and loss_used >= cap:
@@ -1128,10 +1198,50 @@ def daily_risk_report(state):
         "reason": reason,
         "closedPnl": round(closed_pnl, 4),
         "lossUsed": round(loss_used, 4),
+        "dailyLossUsed": round(loss_used, 4),
         "dailyLossCapUsdt": cap,
         "tradesToday": trades_today,
         "maxTradesPerDay": max_trades,
-        "dayStart": local_day_start_epoch(),
+        "dayStart": get_trading_day_start_epoch(date_key),
+        "tradingDateKey": date_key,
+    }
+
+
+def get_debug_risk_info(state):
+    date_key = get_current_trading_date_key()
+    start_epoch = get_trading_day_start_epoch(date_key)
+
+    closed_pnl, pnl_msg = get_daily_closed_pnl(date_key)
+    loss_used = abs(min(0.0, closed_pnl)) if closed_pnl is not None else 0.0
+
+    engine = get_bot_engine()
+    trades_today = count_today_accepted_orders(engine, date_key)
+
+    cap = max(0.0, float(state.get("dailyLossCapUsdt") or 0))
+    max_trades = max(1, int(state.get("maxTradesPerDay") or 1))
+
+    lock_reason = "Daily risk OK"
+    if cap > 0 and loss_used >= cap:
+        lock_reason = f"Daily loss cap reached (${loss_used:.2f}/${cap:.2f})"
+    elif trades_today >= max_trades:
+        lock_reason = f"Max trades/day reached ({trades_today}/{max_trades})"
+
+    return {
+        "tradingDateKey": date_key,
+        "dayStartEpoch": start_epoch,
+        "timezone": get_configured_timezone(),
+        "tradesToday": {
+            "source": "journal_accepted_orders",
+            "count": trades_today,
+            "max": max_trades,
+        },
+        "dailyLossUsed": {
+            "source": "bybit_closed_pnl",
+            "value": loss_used,
+            "cap": cap,
+        },
+        "lockReason": lock_reason,
+        "locked": (cap > 0 and loss_used >= cap) or trades_today >= max_trades,
     }
 
 
@@ -1800,6 +1910,7 @@ def close_symbol_positions(symbol):
 
 def bot_tick():
     with BOT_LOCK:
+        check_and_reset_daily_state(BOT_STATE)
         state = dict(BOT_STATE)
 
     symbol = state["symbol"]
@@ -2008,6 +2119,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/bot/sizing":
             symbol = query.get("symbol", "BTCUSDT").upper()
             with BOT_LOCK:
+                check_and_reset_daily_state(BOT_STATE)
                 state = dict(BOT_STATE)
             sizing = calculate_position_sizing(symbol, state)
             json_response(self, 200, {
@@ -2029,12 +2141,21 @@ class Handler(BaseHTTPRequestHandler):
             json_response(self, 200, payload)
             return
 
+        if parsed.path == "/api/bot/debug-risk":
+            with BOT_LOCK:
+                check_and_reset_daily_state(BOT_STATE)
+                info = get_debug_risk_info(BOT_STATE)
+            json_response(self, 200, info)
+            return
+
         if parsed.path == "/api/bot/status":
             with BOT_LOCK:
+                check_and_reset_daily_state(BOT_STATE)
                 payload = dict(BOT_STATE)
                 payload["engineOverview"] = get_bot_engine().overview()
                 payload["universe"] = top_gainer_universe()
                 payload["dailyRisk"] = daily_risk_report(payload)
+                payload["debugRisk"] = get_debug_risk_info(payload)
                 payload["scanSeconds"] = BOT_SCAN_SECONDS
                 payload["topGainerRefreshSeconds"] = TOP_GAINER_REFRESH_SECONDS
             json_response(self, 200, {"ok": True, "bot": payload})
@@ -2130,6 +2251,7 @@ class Handler(BaseHTTPRequestHandler):
             take_profit_pct = float(payload.get("takeProfitPct", 1.6))
 
             with BOT_LOCK:
+                check_and_reset_daily_state(BOT_STATE)
                 state = dict(BOT_STATE)
 
             # Check daily loss cap
@@ -2180,6 +2302,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/bot/start":
             with BOT_LOCK:
+                check_and_reset_daily_state(BOT_STATE)
                 state = dict(BOT_STATE)
             check_state = {**state, "dailyLossCapUsdt": payload.get("dailyLossCapUsdt", state.get("dailyLossCapUsdt", 25.0))}
             reached, lock_reason = daily_loss_cap_reached(check_state)
@@ -2251,6 +2374,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/bot/stop":
             with BOT_LOCK:
+                check_and_reset_daily_state(BOT_STATE)
                 BOT_STATE.update({
                     "enabled": False,
                     "lastReason": "Auto trader stopped by user.",
@@ -2261,6 +2385,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/bot/manage-positions":
             with BOT_LOCK:
+                check_and_reset_daily_state(BOT_STATE)
                 state = dict(BOT_STATE)
             result = manage_open_positions(state)
             with BOT_LOCK:
@@ -2272,6 +2397,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/bybit/kill-switch":
             symbol = str(payload.get("symbol", "BTCUSDT")).upper()
             with BOT_LOCK:
+                check_and_reset_daily_state(BOT_STATE)
                 BOT_STATE.update({
                     "enabled": False,
                     "lastReason": "Auto trader stopped by kill switch.",
